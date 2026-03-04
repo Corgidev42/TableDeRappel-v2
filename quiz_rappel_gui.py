@@ -1,8 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Table de Rappel - Quiz GUI (v2)
+Table de Rappel — Quiz GUI (v2)
 Interface graphique pour apprendre et réviser la table de rappel.
+Améliorations v2 :
+  - Mode Flashcard (révision sans stress)
+  - Raccourcis clavier (Échap, Entrée, chiffres)
+  - Auto-avance après bonne réponse
+  - Streak (série) de bonnes réponses
+  - Scroll macOS natif
+  - Centrage fenêtre
+  - Meilleure UX globale
 """
 
 import csv
@@ -13,7 +21,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 # ============================================================
-# Constantes de style
+# Constantes de style — thème Catppuccin Mocha
 # ============================================================
 BG_DARK = "#1e1e2e"
 BG_CARD = "#2a2a3d"
@@ -25,18 +33,25 @@ FG_GREEN = "#a6e3a1"
 FG_RED = "#f38ba8"
 FG_YELLOW = "#f9e2af"
 FG_MAUVE = "#cba6f7"
+FG_ORANGE = "#fab387"
 BTN_BG = "#45475a"
 BTN_HOVER = "#585b70"
 BTN_ACCENT = "#89b4fa"
 BTN_ACCENT_FG = "#1e1e2e"
+
 FONT_TITLE = ("Helvetica", 28, "bold")
 FONT_SUBTITLE = ("Helvetica", 16)
 FONT_BODY = ("Helvetica", 13)
 FONT_BODY_BOLD = ("Helvetica", 13, "bold")
 FONT_SMALL = ("Helvetica", 11)
 FONT_BIG = ("Helvetica", 42, "bold")
+FONT_HUGE = ("Helvetica", 56, "bold")
 FONT_QUESTION = ("Helvetica", 20)
 FONT_INPUT = ("Helvetica", 18)
+FONT_STREAK = ("Helvetica", 15, "bold")
+
+# Auto-avance (ms) après une bonne réponse
+AUTO_ADVANCE_MS = 1200
 
 # ============================================================
 # Données
@@ -82,7 +97,8 @@ def save_stats(stats):
     """Sauvegarde les stats."""
     with open(STATS_FILE, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow(["Nombre", "Mot", "Score_nombre->mot", "Score_mot->nombre", "Temps_moyen_par_lettre"])
+        writer.writerow(["Nombre", "Mot", "Score_nombre->mot",
+                         "Score_mot->nombre", "Temps_moyen_par_lettre"])
         for (nombre, mot), (s_nm, s_mn, t) in stats.items():
             writer.writerow([nombre, mot, s_nm, s_mn, f"{t:.3f}"])
 
@@ -95,8 +111,16 @@ class QuizApp(tk.Tk):
         super().__init__()
         self.title("Table de Rappel — Quiz v2")
         self.configure(bg=BG_DARK)
-        self.minsize(900, 650)
-        self.geometry("960x700")
+        self.minsize(960, 700)
+        self.geometry("1000x740")
+
+        # Centrage fenêtre
+        self.update_idletasks()
+        sw = self.winfo_screenwidth()
+        sh = self.winfo_screenheight()
+        x = (sw - 1000) // 2
+        y = (sh - 740) // 2
+        self.geometry(f"1000x740+{x}+{y}")
 
         # Données
         self.table = load_table()
@@ -106,13 +130,19 @@ class QuizApp(tk.Tk):
         self.questions = []
         self.current_q = 0
         self.score = 0
+        self.streak = 0
+        self.best_streak = 0
         self.quiz_start_time = 0
         self.question_start_time = 0
         self.results = []  # (mode, nombre, mot, user_answer, correct, time)
+        self._auto_advance_id = None
 
         # Container principal
         self.container = tk.Frame(self, bg=BG_DARK)
         self.container.pack(fill="both", expand=True)
+
+        # Raccourci global : Échap = retour menu
+        self.bind("<Escape>", lambda e: self.show_main_menu())
 
         # Démarrer avec le menu
         self.show_main_menu()
@@ -121,52 +151,87 @@ class QuizApp(tk.Tk):
     # Utilitaires UI
     # --------------------------------------------------------
     def clear(self):
+        """Supprime tous les widgets du container et annule les timers."""
+        if self._auto_advance_id:
+            self.after_cancel(self._auto_advance_id)
+            self._auto_advance_id = None
         for w in self.container.winfo_children():
             w.destroy()
 
-    def make_button(self, parent, text, command, accent=False, width=25):
-        bg = BTN_ACCENT if accent else BTN_BG
-        fg = BTN_ACCENT_FG if accent else FG_PRIMARY
-        hover_bg = "#7aa2f7" if accent else BTN_HOVER
+    def make_button(self, parent, text, command, accent=False, width=25,
+                    danger=False):
+        if danger:
+            bg, fg, hover_bg = FG_RED, "#1e1e2e", "#e06080"
+        elif accent:
+            bg, fg, hover_bg = BTN_ACCENT, BTN_ACCENT_FG, "#7aa2f7"
+        else:
+            bg, fg, hover_bg = BTN_BG, FG_PRIMARY, BTN_HOVER
+
         btn = tk.Button(
             parent, text=text, command=command,
             font=FONT_BODY_BOLD, bg=bg, fg=fg,
             activebackground=hover_bg, activeforeground=fg,
-            relief="flat", cursor="hand2", width=width, pady=8
+            relief="flat", cursor="hand2", width=width, pady=8,
         )
         btn.bind("<Enter>", lambda e: btn.configure(bg=hover_bg))
         btn.bind("<Leave>", lambda e: btn.configure(bg=bg))
         return btn
 
     def make_card(self, parent, **kwargs):
-        frame = tk.Frame(parent, bg=BG_CARD, padx=20, pady=15, **kwargs)
-        return frame
+        return tk.Frame(parent, bg=BG_CARD, padx=20, pady=15, **kwargs)
+
+    @staticmethod
+    def _bind_mousewheel(canvas):
+        """Scroll compatible macOS + Linux + Windows."""
+        def _on_mousewheel(event):
+            # macOS trackpad : event.delta est en pixels (grand)
+            if abs(event.delta) > 10:
+                canvas.yview_scroll(-1 * (event.delta // 3), "units")
+            else:
+                canvas.yview_scroll(-1 * event.delta, "units")
+
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        canvas.bind_all("<Button-4>", lambda e: canvas.yview_scroll(-3, "units"))
+        canvas.bind_all("<Button-5>", lambda e: canvas.yview_scroll(3, "units"))
 
     # --------------------------------------------------------
     # Écran : Menu principal
     # --------------------------------------------------------
     def show_main_menu(self):
         self.clear()
+        self.unbind("<Return>")
 
         # Titre
         tk.Label(
             self.container, text="🧠 Table de Rappel", font=FONT_TITLE,
-            bg=BG_DARK, fg=FG_ACCENT
-        ).pack(pady=(40, 5))
+            bg=BG_DARK, fg=FG_ACCENT,
+        ).pack(pady=(35, 3))
         tk.Label(
             self.container, text="Entraîne ta mémoire avec le système majeur",
-            font=FONT_SUBTITLE, bg=BG_DARK, fg=FG_SECONDARY
-        ).pack(pady=(0, 30))
+            font=FONT_SUBTITLE, bg=BG_DARK, fg=FG_SECONDARY,
+        ).pack(pady=(0, 25))
 
         # Stats résumé
         total = len(self.stats)
         bien_connus = sum(1 for v in self.stats.values() if v[0] + v[1] >= 4)
         en_cours = sum(1 for v in self.stats.values() if 0 < v[0] + v[1] < 4)
-        a_revoir = sum(1 for v in self.stats.values() if v[0] + v[1] <= 0 and (v[0] != 0 or v[1] != 0))
-        non_vus = sum(1 for v in self.stats.values() if v[0] == 0 and v[1] == 0)
+        a_revoir = sum(
+            1 for v in self.stats.values()
+            if v[0] + v[1] <= 0 and (v[0] != 0 or v[1] != 0)
+        )
+        non_vus = sum(
+            1 for v in self.stats.values() if v[0] == 0 and v[1] == 0
+        )
 
         stats_frame = self.make_card(self.container)
-        stats_frame.pack(pady=(0, 25), padx=60, fill="x")
+        stats_frame.pack(pady=(0, 20), padx=60, fill="x")
+
+        # Barre de maîtrise
+        bar_canvas = tk.Canvas(stats_frame, height=12, bg=BTN_BG,
+                               highlightthickness=0)
+        bar_canvas.pack(fill="x", pady=(0, 12))
+        self.after(50, lambda: self._draw_mastery_bar(
+            bar_canvas, total, bien_connus, en_cours, a_revoir, non_vus))
 
         stats_inner = tk.Frame(stats_frame, bg=BG_CARD)
         stats_inner.pack()
@@ -180,50 +245,95 @@ class QuizApp(tk.Tk):
         ]:
             col = tk.Frame(stats_inner, bg=BG_CARD, padx=18)
             col.pack(side="left")
-            tk.Label(col, text=str(value), font=("Helvetica", 22, "bold"), bg=BG_CARD, fg=color).pack()
-            tk.Label(col, text=label, font=FONT_SMALL, bg=BG_CARD, fg=FG_SECONDARY).pack()
+            tk.Label(col, text=str(value),
+                     font=("Helvetica", 22, "bold"),
+                     bg=BG_CARD, fg=color).pack()
+            tk.Label(col, text=label, font=FONT_SMALL,
+                     bg=BG_CARD, fg=FG_SECONDARY).pack()
 
-        # Boutons modes
+        # ---- Modes de quiz ----
         modes_frame = tk.Frame(self.container, bg=BG_DARK)
         modes_frame.pack(pady=5)
 
         modes = [
-            ("📦  Quiz par bloc", self.show_bloc_config),
-            ("🎯  Focus points faibles", self.start_focus_mode),
-            ("🎲  Quiz aléatoire (20 Q)", self.start_random_mode),
-            ("📋  Toute la table", self.start_full_mode),
+            ("1", "📦  Quiz par bloc", self.show_bloc_config),
+            ("2", "🎯  Focus points faibles", self.start_focus_mode),
+            ("3", "🎲  Quiz aléatoire (20 Q)", self.start_random_mode),
+            ("4", "📋  Toute la table", self.start_full_mode),
+            ("5", "🃏  Mode Flashcard", self.start_flashcard_mode),
         ]
-        for text, cmd in modes:
-            self.make_button(modes_frame, text, cmd, accent=False, width=30).pack(pady=5)
+        for key, text, cmd in modes:
+            row = tk.Frame(modes_frame, bg=BG_DARK)
+            row.pack(fill="x", pady=3)
+            # Raccourci clavier
+            tk.Label(row, text=key, font=FONT_BODY_BOLD, bg=BG_INPUT,
+                     fg=FG_ACCENT, width=3, pady=2).pack(side="left", padx=(0, 8))
+            self.make_button(row, text, cmd, width=32).pack(side="left")
 
-        # Boutons secondaires
+        # Raccourcis clavier 1–5
+        for key, _, cmd in modes:
+            self.bind(key, lambda e, c=cmd: c())
+
+        # ---- Boutons secondaires ----
         bottom_frame = tk.Frame(self.container, bg=BG_DARK)
-        bottom_frame.pack(pady=(20, 10))
-        self.make_button(bottom_frame, "📊  Voir les statistiques", self.show_stats_view, width=30).pack(side="left", padx=5)
-        self.make_button(bottom_frame, "📖  Parcourir la table", self.show_table_view, width=30).pack(side="left", padx=5)
+        bottom_frame.pack(pady=(15, 10))
+        self.make_button(
+            bottom_frame, "📊  Statistiques", self.show_stats_view, width=25,
+        ).pack(side="left", padx=5)
+        self.make_button(
+            bottom_frame, "📖  Parcourir la table", self.show_table_view,
+            width=25,
+        ).pack(side="left", padx=5)
+
+        # Footer
+        tk.Label(
+            self.container,
+            text="Raccourcis : 1-5 = modes · Échap = menu · Entrée = valider",
+            font=FONT_SMALL, bg=BG_DARK, fg="#585b70",
+        ).pack(side="bottom", pady=(0, 10))
+
+    def _draw_mastery_bar(self, canvas, total, ok, en_cours, revoir, non_vus):
+        """Dessine une barre de progression colorée de la maîtrise globale."""
+        canvas.update_idletasks()
+        w = canvas.winfo_width()
+        if total == 0 or w <= 0:
+            return
+        segments = [
+            (ok, FG_GREEN), (en_cours, FG_YELLOW),
+            (revoir, FG_RED), (non_vus, "#45475a"),
+        ]
+        x = 0
+        for count, color in segments:
+            seg_w = int(w * count / total)
+            if seg_w > 0:
+                canvas.create_rectangle(x, 0, x + seg_w, 12,
+                                        fill=color, outline="")
+            x += seg_w
 
     # --------------------------------------------------------
     # Écran : Configuration bloc
     # --------------------------------------------------------
     def show_bloc_config(self):
         self.clear()
+        self._unbind_menu_keys()
 
         tk.Label(
             self.container, text="📦 Quiz par bloc", font=FONT_TITLE,
-            bg=BG_DARK, fg=FG_ACCENT
-        ).pack(pady=(40, 20))
+            bg=BG_DARK, fg=FG_ACCENT,
+        ).pack(pady=(35, 15))
 
         card = self.make_card(self.container)
         card.pack(padx=80, fill="x")
 
         tk.Label(
-            card, text="Sélectionne la plage de blocs (ex: 0-9 = bloc 0, 10-19 = bloc 1, …)",
-            font=FONT_BODY, bg=BG_CARD, fg=FG_SECONDARY, wraplength=600
-        ).pack(pady=(5, 15))
+            card,
+            text="Sélectionne les blocs à réviser :",
+            font=FONT_BODY, bg=BG_CARD, fg=FG_SECONDARY, wraplength=600,
+        ).pack(pady=(5, 12))
 
-        # Grille de sélection de blocs
+        # Grille de blocs
         blocs_frame = tk.Frame(card, bg=BG_CARD)
-        blocs_frame.pack(pady=10)
+        blocs_frame.pack(pady=5)
 
         self.bloc_vars = {}
         for i in range(11):  # 0..10
@@ -232,49 +342,77 @@ class QuizApp(tk.Tk):
             var = tk.BooleanVar(value=False)
             self.bloc_vars[i] = var
             cb = tk.Checkbutton(
-                blocs_frame, text=f"{start}-{end}", variable=var,
+                blocs_frame, text=f"{start:>3}–{end}", variable=var,
                 font=FONT_BODY, bg=BG_CARD, fg=FG_PRIMARY,
-                selectcolor=BG_INPUT, activebackground=BG_CARD, activeforeground=FG_PRIMARY,
-                highlightthickness=0
+                selectcolor=BG_INPUT, activebackground=BG_CARD,
+                activeforeground=FG_PRIMARY, highlightthickness=0,
             )
             cb.grid(row=i // 4, column=i % 4, padx=12, pady=5, sticky="w")
 
-        # Sens
-        sens_frame = tk.Frame(card, bg=BG_CARD)
-        sens_frame.pack(pady=(15, 5))
-        tk.Label(sens_frame, text="Direction :", font=FONT_BODY_BOLD, bg=BG_CARD, fg=FG_PRIMARY).pack(side="left", padx=(0, 10))
+        # Sélection rapide
+        quick_frame = tk.Frame(card, bg=BG_CARD)
+        quick_frame.pack(pady=(8, 5))
+        self.make_button(
+            quick_frame, "Tout sélectionner", self._select_all_blocs, width=18,
+        ).pack(side="left", padx=5)
+        self.make_button(
+            quick_frame, "Tout désélectionner", self._deselect_all_blocs,
+            width=18,
+        ).pack(side="left", padx=5)
 
-        self.sens_var = tk.StringVar(value="3")
-        for text, val in [("Nombre → Mot", "1"), ("Mot → Nombre", "2"), ("Les deux", "3")]:
-            tk.Radiobutton(
-                sens_frame, text=text, variable=self.sens_var, value=val,
-                font=FONT_BODY, bg=BG_CARD, fg=FG_PRIMARY,
-                selectcolor=BG_INPUT, activebackground=BG_CARD, activeforeground=FG_PRIMARY,
-                highlightthickness=0
-            ).pack(side="left", padx=8)
+        # Direction
+        self._add_direction_picker(card)
 
         # Boutons
         btn_frame = tk.Frame(self.container, bg=BG_DARK)
-        btn_frame.pack(pady=25)
-        self.make_button(btn_frame, "🚀  Lancer le quiz", self._start_bloc_quiz, accent=True).pack(side="left", padx=10)
-        self.make_button(btn_frame, "⬅  Retour", self.show_main_menu).pack(side="left", padx=10)
+        btn_frame.pack(pady=20)
+        self.make_button(btn_frame, "🚀  Lancer le quiz",
+                         self._start_bloc_quiz, accent=True).pack(
+            side="left", padx=10)
+        self.make_button(btn_frame, "⬅  Retour",
+                         self.show_main_menu).pack(side="left", padx=10)
+
+    def _select_all_blocs(self):
+        for v in self.bloc_vars.values():
+            v.set(True)
+
+    def _deselect_all_blocs(self):
+        for v in self.bloc_vars.values():
+            v.set(False)
+
+    def _add_direction_picker(self, parent):
+        """Widget de sélection de direction réutilisable."""
+        sens_frame = tk.Frame(parent, bg=BG_CARD)
+        sens_frame.pack(pady=(12, 5))
+        tk.Label(sens_frame, text="Direction :", font=FONT_BODY_BOLD,
+                 bg=BG_CARD, fg=FG_PRIMARY).pack(side="left", padx=(0, 10))
+
+        self.sens_var = tk.StringVar(value="3")
+        for text, val in [("Nombre → Mot", "1"), ("Mot → Nombre", "2"),
+                          ("Les deux", "3")]:
+            tk.Radiobutton(
+                sens_frame, text=text, variable=self.sens_var, value=val,
+                font=FONT_BODY, bg=BG_CARD, fg=FG_PRIMARY,
+                selectcolor=BG_INPUT, activebackground=BG_CARD,
+                activeforeground=FG_PRIMARY, highlightthickness=0,
+            ).pack(side="left", padx=8)
 
     def _start_bloc_quiz(self):
         selected = [i for i, v in self.bloc_vars.items() if v.get()]
         if not selected:
-            messagebox.showwarning("Attention", "Sélectionne au moins un bloc !")
+            messagebox.showwarning("Attention",
+                                   "Sélectionne au moins un bloc !")
             return
-
         pairs = []
         for bloc_i in selected:
             start = bloc_i * 10
             end = min(start + 9, 100)
-            pairs.extend([p for p in self.table if start <= int(p[0]) <= end])
-
+            pairs.extend(
+                [p for p in self.table if start <= int(p[0]) <= end])
         if not pairs:
-            messagebox.showwarning("Attention", "Aucune correspondance trouvée pour ces blocs.")
+            messagebox.showwarning("Attention",
+                                   "Aucune correspondance pour ces blocs.")
             return
-
         self._build_questions(pairs)
 
     # --------------------------------------------------------
@@ -284,7 +422,8 @@ class QuizApp(tk.Tk):
         self._show_sens_then_start(self._do_start_focus)
 
     def _do_start_focus(self):
-        tri = sorted(self.stats.items(), key=lambda x: x[1][0] + x[1][1])
+        tri = sorted(self.stats.items(),
+                     key=lambda x: x[1][0] + x[1][1])
         faibles = [k for k, v in tri[:20]]
         self._build_questions(faibles)
 
@@ -304,11 +443,12 @@ class QuizApp(tk.Tk):
     def _show_sens_then_start(self, callback):
         """Demande la direction puis lance le quiz."""
         self.clear()
+        self._unbind_menu_keys()
 
         tk.Label(
             self.container, text="Direction du quiz", font=FONT_TITLE,
-            bg=BG_DARK, fg=FG_ACCENT
-        ).pack(pady=(60, 30))
+            bg=BG_DARK, fg=FG_ACCENT,
+        ).pack(pady=(60, 25))
 
         self.sens_var = tk.StringVar(value="3")
         card = self.make_card(self.container)
@@ -325,15 +465,23 @@ class QuizApp(tk.Tk):
             tk.Radiobutton(
                 f, text=f"  {title}", variable=self.sens_var, value=val,
                 font=FONT_BODY_BOLD, bg=BG_CARD, fg=FG_PRIMARY,
-                selectcolor=BG_INPUT, activebackground=BG_CARD, activeforeground=FG_PRIMARY,
-                highlightthickness=0, anchor="w"
+                selectcolor=BG_INPUT, activebackground=BG_CARD,
+                activeforeground=FG_PRIMARY, highlightthickness=0, anchor="w",
             ).pack(anchor="w")
-            tk.Label(f, text=f"       {desc}", font=FONT_SMALL, bg=BG_CARD, fg=FG_SECONDARY).pack(anchor="w")
+            tk.Label(f, text=f"       {desc}", font=FONT_SMALL,
+                     bg=BG_CARD, fg=FG_SECONDARY).pack(anchor="w")
 
         btn_frame = tk.Frame(self.container, bg=BG_DARK)
         btn_frame.pack(pady=30)
-        self.make_button(btn_frame, "🚀  Lancer", callback, accent=True).pack(side="left", padx=10)
-        self.make_button(btn_frame, "⬅  Retour", self.show_main_menu).pack(side="left", padx=10)
+        self.make_button(btn_frame, "🚀  Lancer", callback,
+                         accent=True).pack(side="left", padx=10)
+        self.make_button(btn_frame, "⬅  Retour",
+                         self.show_main_menu).pack(side="left", padx=10)
+
+    def _unbind_menu_keys(self):
+        """Détache les raccourcis du menu principal."""
+        for key in ("1", "2", "3", "4", "5"):
+            self.unbind(key)
 
     # --------------------------------------------------------
     # Construction des questions et lancement
@@ -349,6 +497,8 @@ class QuizApp(tk.Tk):
         random.shuffle(self.questions)
         self.current_q = 0
         self.score = 0
+        self.streak = 0
+        self.best_streak = 0
         self.results = []
         self.quiz_start_time = time.time()
         self.question_start_time = time.time()
@@ -359,54 +509,61 @@ class QuizApp(tk.Tk):
     # --------------------------------------------------------
     def _show_question(self):
         self.clear()
+        self.unbind("<Return>")
 
         mode, nombre, mot = self.questions[self.current_q]
         total = len(self.questions)
         idx = self.current_q + 1
 
-        # Barre de progression
-        progress_frame = tk.Frame(self.container, bg=BG_DARK)
-        progress_frame.pack(fill="x", padx=40, pady=(20, 0))
+        # -- Barre de progression & infos --
+        top_bar = tk.Frame(self.container, bg=BG_DARK)
+        top_bar.pack(fill="x", padx=40, pady=(18, 0))
 
         tk.Label(
-            progress_frame, text=f"Question {idx}/{total}",
-            font=FONT_BODY_BOLD, bg=BG_DARK, fg=FG_SECONDARY
+            top_bar, text=f"Question {idx}/{total}",
+            font=FONT_BODY_BOLD, bg=BG_DARK, fg=FG_SECONDARY,
         ).pack(side="left")
 
-        tk.Label(
-            progress_frame, text=f"Score : {self.score}/{idx - 1}" if idx > 1 else "",
-            font=FONT_BODY, bg=BG_DARK, fg=FG_GREEN
-        ).pack(side="right")
+        # Streak
+        if self.streak >= 2:
+            tk.Label(
+                top_bar, text=f"🔥 {self.streak}",
+                font=FONT_STREAK, bg=BG_DARK, fg=FG_ORANGE,
+            ).pack(side="left", padx=15)
+
+        if idx > 1:
+            tk.Label(
+                top_bar, text=f"Score : {self.score}/{idx - 1}",
+                font=FONT_BODY, bg=BG_DARK, fg=FG_GREEN,
+            ).pack(side="right")
 
         # Progress bar
-        bar_frame = tk.Frame(self.container, bg=BG_DARK, height=6)
-        bar_frame.pack(fill="x", padx=40, pady=(5, 0))
+        bar = tk.Canvas(self.container, height=6, bg=BTN_BG,
+                        highlightthickness=0)
+        bar.pack(fill="x", padx=40, pady=(5, 0))
+        self.after(50, lambda: self._draw_progress(bar, idx, total))
 
-        canvas = tk.Canvas(bar_frame, height=6, bg=BTN_BG, highlightthickness=0)
-        canvas.pack(fill="x")
-        self.after(50, lambda: self._draw_progress(canvas, idx, total))
-
-        # Zone question
+        # -- Zone question --
         q_frame = tk.Frame(self.container, bg=BG_DARK)
         q_frame.pack(expand=True, fill="both", padx=40)
 
         if mode == "nombre->mot":
             tk.Label(
                 q_frame, text="Quel mot correspond au nombre…",
-                font=FONT_BODY, bg=BG_DARK, fg=FG_SECONDARY
-            ).pack(pady=(30, 10))
+                font=FONT_BODY, bg=BG_DARK, fg=FG_SECONDARY,
+            ).pack(pady=(30, 8))
             tk.Label(
                 q_frame, text=nombre, font=FONT_BIG,
-                bg=BG_DARK, fg=FG_ACCENT
+                bg=BG_DARK, fg=FG_ACCENT,
             ).pack(pady=(0, 20))
         else:
             tk.Label(
                 q_frame, text="Quel nombre correspond au mot…",
-                font=FONT_BODY, bg=BG_DARK, fg=FG_SECONDARY
-            ).pack(pady=(30, 10))
+                font=FONT_BODY, bg=BG_DARK, fg=FG_SECONDARY,
+            ).pack(pady=(30, 8))
             tk.Label(
                 q_frame, text=mot, font=FONT_BIG,
-                bg=BG_DARK, fg=FG_GREEN
+                bg=BG_DARK, fg=FG_GREEN,
             ).pack(pady=(0, 20))
 
         # Input
@@ -415,20 +572,23 @@ class QuizApp(tk.Tk):
             q_frame, textvariable=self.answer_var,
             font=FONT_INPUT, bg=BG_INPUT, fg=FG_PRIMARY,
             insertbackground=FG_PRIMARY, relief="flat",
-            justify="center", width=25
+            justify="center", width=25,
         )
         entry.pack(ipady=8, pady=(0, 15))
         entry.focus_set()
         entry.bind("<Return>", lambda e: self._submit_answer())
 
         # Bouton valider
-        self.make_button(q_frame, "Valider ↵", self._submit_answer, accent=True, width=20).pack()
+        self.make_button(
+            q_frame, "Valider ↵", self._submit_answer, accent=True, width=20,
+        ).pack()
 
         # Timer live
         self.timer_label = tk.Label(
-            q_frame, text="⏱ 0.0s", font=FONT_SMALL, bg=BG_DARK, fg=FG_SECONDARY
+            q_frame, text="⏱ 0.0s", font=FONT_SMALL,
+            bg=BG_DARK, fg=FG_SECONDARY,
         )
-        self.timer_label.pack(pady=(15, 0))
+        self.timer_label.pack(pady=(12, 0))
         self._update_timer()
 
     def _draw_progress(self, canvas, current, total):
@@ -458,7 +618,7 @@ class QuizApp(tk.Tk):
             correct = answer == nombre
             expected = nombre
 
-        # Update stats
+        # Mise à jour des stats
         if mode == "nombre->mot":
             if correct:
                 self.stats[(nombre, mot)][0] += 1
@@ -466,7 +626,9 @@ class QuizApp(tk.Tk):
                 if nb_lettres > 0:
                     tpl = elapsed / nb_lettres
                     ancien = self.stats[(nombre, mot)][2]
-                    self.stats[(nombre, mot)][2] = tpl if ancien == 0 else (ancien + tpl) / 2
+                    self.stats[(nombre, mot)][2] = (
+                        tpl if ancien == 0 else (ancien + tpl) / 2
+                    )
             else:
                 self.stats[(nombre, mot)][0] -= 1
         else:
@@ -477,11 +639,14 @@ class QuizApp(tk.Tk):
 
         if correct:
             self.score += 1
+            self.streak += 1
+            self.best_streak = max(self.best_streak, self.streak)
+        else:
+            self.streak = 0
 
         self.results.append((mode, nombre, mot, answer, correct, elapsed))
         self.question_start_time = time.time()
 
-        # Show feedback
         self._show_feedback(correct, expected, elapsed)
 
     # --------------------------------------------------------
@@ -489,49 +654,51 @@ class QuizApp(tk.Tk):
     # --------------------------------------------------------
     def _show_feedback(self, correct, expected, elapsed):
         self.clear()
-
         mode, nombre, mot, answer, _, _ = self.results[-1]
 
-        # Icône et message
         if correct:
-            icon = "✅"
-            msg = "Correct !"
-            color = FG_GREEN
+            icon, msg, color = "✅", "Correct !", FG_GREEN
         else:
-            icon = "❌"
-            msg = "Mauvaise réponse"
-            color = FG_RED
+            icon, msg, color = "❌", "Mauvaise réponse", FG_RED
 
         tk.Label(
             self.container, text=icon, font=("Helvetica", 64),
-            bg=BG_DARK, fg=color
-        ).pack(pady=(50, 5))
+            bg=BG_DARK, fg=color,
+        ).pack(pady=(40, 0))
         tk.Label(
             self.container, text=msg, font=FONT_TITLE,
-            bg=BG_DARK, fg=color
-        ).pack(pady=(0, 15))
+            bg=BG_DARK, fg=color,
+        ).pack(pady=(0, 10))
+
+        # Streak badge
+        if correct and self.streak >= 3:
+            tk.Label(
+                self.container,
+                text=f"🔥 Série de {self.streak} !",
+                font=FONT_STREAK, bg=BG_DARK, fg=FG_ORANGE,
+            ).pack()
 
         # Détails
         card = self.make_card(self.container)
-        card.pack(padx=120)
+        card.pack(padx=120, pady=(10, 0))
 
         if not correct:
             tk.Label(
                 card, text=f"Ta réponse : {answer}", font=FONT_BODY,
-                bg=BG_CARD, fg=FG_RED
+                bg=BG_CARD, fg=FG_RED,
             ).pack(anchor="w", pady=2)
             tk.Label(
-                card, text=f"Bonne réponse : {expected}", font=FONT_BODY_BOLD,
-                bg=BG_CARD, fg=FG_GREEN
+                card, text=f"Bonne réponse : {expected}",
+                font=FONT_BODY_BOLD, bg=BG_CARD, fg=FG_GREEN,
             ).pack(anchor="w", pady=2)
 
         tk.Label(
             card, text=f"{nombre}  ↔  {mot}",
-            font=FONT_QUESTION, bg=BG_CARD, fg=FG_ACCENT
+            font=FONT_QUESTION, bg=BG_CARD, fg=FG_ACCENT,
         ).pack(pady=(10, 5))
         tk.Label(
             card, text=f"⏱ {elapsed:.1f}s",
-            font=FONT_BODY, bg=BG_CARD, fg=FG_SECONDARY
+            font=FONT_BODY, bg=BG_CARD, fg=FG_SECONDARY,
         ).pack()
 
         # Progression
@@ -539,10 +706,10 @@ class QuizApp(tk.Tk):
         total = len(self.questions)
         tk.Label(
             self.container, text=f"{idx}/{total} — Score : {self.score}/{idx}",
-            font=FONT_BODY, bg=BG_DARK, fg=FG_SECONDARY
-        ).pack(pady=(15, 0))
+            font=FONT_BODY, bg=BG_DARK, fg=FG_SECONDARY,
+        ).pack(pady=(12, 0))
 
-        # Bouton suivant / terminer
+        # Navigation
         self.current_q += 1
         if self.current_q < total:
             btn_text = "Question suivante →"
@@ -551,10 +718,22 @@ class QuizApp(tk.Tk):
             btn_text = "Voir les résultats 🏁"
             btn_cmd = self._show_results
 
-        btn = self.make_button(self.container, btn_text, btn_cmd, accent=True, width=25)
-        btn.pack(pady=25)
+        btn = self.make_button(
+            self.container, btn_text, btn_cmd, accent=True, width=25,
+        )
+        btn.pack(pady=20)
         self.bind("<Return>", lambda e: btn_cmd())
         btn.focus_set()
+
+        # Auto-avance si correct
+        if correct and self.current_q < total:
+            # Countdown label
+            countdown_lbl = tk.Label(
+                self.container, text=f"Suite automatique…",
+                font=FONT_SMALL, bg=BG_DARK, fg="#585b70",
+            )
+            countdown_lbl.pack()
+            self._auto_advance_id = self.after(AUTO_ADVANCE_MS, btn_cmd)
 
     # --------------------------------------------------------
     # Écran : Résultats du quiz
@@ -570,97 +749,351 @@ class QuizApp(tk.Tk):
 
         tk.Label(
             self.container, text="🏁 Résultats", font=FONT_TITLE,
-            bg=BG_DARK, fg=FG_ACCENT
-        ).pack(pady=(30, 15))
+            bg=BG_DARK, fg=FG_ACCENT,
+        ).pack(pady=(25, 10))
 
         # Score principal
-        score_color = FG_GREEN if pct >= 80 else (FG_YELLOW if pct >= 50 else FG_RED)
+        score_color = (FG_GREEN if pct >= 80
+                       else (FG_YELLOW if pct >= 50 else FG_RED))
         tk.Label(
             self.container, text=f"{self.score}/{total_q}",
-            font=("Helvetica", 56, "bold"), bg=BG_DARK, fg=score_color
+            font=FONT_HUGE, bg=BG_DARK, fg=score_color,
         ).pack()
         tk.Label(
-            self.container, text=f"{pct:.0f}% — Temps total : {total_time:.1f}s",
-            font=FONT_SUBTITLE, bg=BG_DARK, fg=FG_SECONDARY
+            self.container,
+            text=f"{pct:.0f}%  ·  {total_time:.1f}s  ·  "
+                 f"Meilleure série : {self.best_streak} 🔥",
+            font=FONT_SUBTITLE, bg=BG_DARK, fg=FG_SECONDARY,
         ).pack(pady=(0, 15))
 
-        # Détail des erreurs
+        # Temps moyen par question
+        if total_q > 0:
+            avg_time = total_time / total_q
+            tk.Label(
+                self.container,
+                text=f"⏱ Temps moyen : {avg_time:.1f}s / question",
+                font=FONT_BODY, bg=BG_DARK, fg=FG_SECONDARY,
+            ).pack(pady=(0, 10))
+
+        # Erreurs
         errors = [r for r in self.results if not r[4]]
         if errors:
             err_card = self.make_card(self.container)
-            err_card.pack(padx=60, fill="x", pady=(0, 10))
+            err_card.pack(padx=60, fill="x", pady=(0, 8))
 
             tk.Label(
                 err_card, text=f"❌ {len(errors)} erreur(s) à revoir :",
-                font=FONT_BODY_BOLD, bg=BG_CARD, fg=FG_RED
+                font=FONT_BODY_BOLD, bg=BG_CARD, fg=FG_RED,
             ).pack(anchor="w", pady=(0, 8))
 
-            # Scrollable list
             list_frame = tk.Frame(err_card, bg=BG_CARD)
             list_frame.pack(fill="x")
 
             for mode, nombre, mot, answer, _, t in errors[:15]:
                 direction = "→" if mode == "nombre->mot" else "←"
-                line = f"  {nombre} {direction} {mot}  (ta réponse : {answer}, {t:.1f}s)"
+                line = (f"  {nombre} {direction} {mot}  "
+                        f"(ta réponse : {answer}, {t:.1f}s)")
                 tk.Label(
                     list_frame, text=line, font=FONT_SMALL,
-                    bg=BG_CARD, fg=FG_SECONDARY, anchor="w"
+                    bg=BG_CARD, fg=FG_SECONDARY, anchor="w",
                 ).pack(anchor="w")
             if len(errors) > 15:
                 tk.Label(
-                    list_frame, text=f"  … et {len(errors) - 15} autre(s)",
-                    font=FONT_SMALL, bg=BG_CARD, fg=FG_SECONDARY
+                    list_frame,
+                    text=f"  … et {len(errors) - 15} autre(s)",
+                    font=FONT_SMALL, bg=BG_CARD, fg=FG_SECONDARY,
                 ).pack(anchor="w")
         else:
             tk.Label(
                 self.container, text="🎉 Aucune erreur ! Parfait !",
-                font=FONT_SUBTITLE, bg=BG_DARK, fg=FG_GREEN
+                font=FONT_SUBTITLE, bg=BG_DARK, fg=FG_GREEN,
             ).pack(pady=10)
 
         # Boutons
         btn_frame = tk.Frame(self.container, bg=BG_DARK)
-        btn_frame.pack(pady=20)
-        self.make_button(btn_frame, "🔄  Recommencer", self.show_main_menu, accent=True).pack(side="left", padx=10)
-        self.make_button(btn_frame, "🚪  Quitter", self.destroy).pack(side="left", padx=10)
+        btn_frame.pack(pady=15)
+        self.make_button(
+            btn_frame, "🔄  Recommencer", self.show_main_menu, accent=True,
+        ).pack(side="left", padx=10)
+
+        # Relancer uniquement les erreurs
+        if errors:
+            self.make_button(
+                btn_frame, "🎯  Re-quiz erreurs",
+                lambda: self._requiz_errors(errors), width=20,
+            ).pack(side="left", padx=10)
+
+        self.make_button(
+            btn_frame, "🚪  Quitter", self.destroy,
+        ).pack(side="left", padx=10)
+
+    def _requiz_errors(self, errors):
+        """Relance un quiz uniquement sur les erreurs."""
+        self.questions = [
+            (mode, nombre, mot) for mode, nombre, mot, _, _, _ in errors
+        ]
+        random.shuffle(self.questions)
+        self.current_q = 0
+        self.score = 0
+        self.streak = 0
+        self.best_streak = 0
+        self.results = []
+        self.quiz_start_time = time.time()
+        self.question_start_time = time.time()
+        self._show_question()
 
     # --------------------------------------------------------
-    # Écran : Voir les statistiques
+    # MODE FLASHCARD
+    # --------------------------------------------------------
+    def start_flashcard_mode(self):
+        self.clear()
+        self._unbind_menu_keys()
+
+        tk.Label(
+            self.container, text="🃏 Mode Flashcard", font=FONT_TITLE,
+            bg=BG_DARK, fg=FG_MAUVE,
+        ).pack(pady=(40, 10))
+        tk.Label(
+            self.container,
+            text="Révise sans pression ! Clique ou appuie sur Espace "
+                 "pour retourner la carte.",
+            font=FONT_BODY, bg=BG_DARK, fg=FG_SECONDARY,
+        ).pack(pady=(0, 20))
+
+        # Options de blocs (simplifié)
+        card = self.make_card(self.container)
+        card.pack(padx=100, fill="x")
+
+        tk.Label(card, text="Plage de nombres :", font=FONT_BODY_BOLD,
+                 bg=BG_CARD, fg=FG_PRIMARY).pack(anchor="w")
+
+        range_frame = tk.Frame(card, bg=BG_CARD)
+        range_frame.pack(fill="x", pady=5)
+
+        tk.Label(range_frame, text="De", font=FONT_BODY,
+                 bg=BG_CARD, fg=FG_SECONDARY).pack(side="left", padx=(0, 5))
+        self.fc_start_var = tk.StringVar(value="0")
+        tk.Entry(
+            range_frame, textvariable=self.fc_start_var, font=FONT_BODY,
+            bg=BG_INPUT, fg=FG_PRIMARY, insertbackground=FG_PRIMARY,
+            relief="flat", width=6, justify="center",
+        ).pack(side="left", ipady=3)
+
+        tk.Label(range_frame, text="  à  ", font=FONT_BODY,
+                 bg=BG_CARD, fg=FG_SECONDARY).pack(side="left")
+        self.fc_end_var = tk.StringVar(value="100")
+        tk.Entry(
+            range_frame, textvariable=self.fc_end_var, font=FONT_BODY,
+            bg=BG_INPUT, fg=FG_PRIMARY, insertbackground=FG_PRIMARY,
+            relief="flat", width=6, justify="center",
+        ).pack(side="left", ipady=3)
+
+        # Mélanger ?
+        self.fc_shuffle_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(
+            card, text="Ordre aléatoire", variable=self.fc_shuffle_var,
+            font=FONT_BODY, bg=BG_CARD, fg=FG_PRIMARY,
+            selectcolor=BG_INPUT, activebackground=BG_CARD,
+            highlightthickness=0,
+        ).pack(anchor="w", pady=5)
+
+        btn_frame = tk.Frame(self.container, bg=BG_DARK)
+        btn_frame.pack(pady=20)
+        self.make_button(
+            btn_frame, "🃏  Commencer", self._launch_flashcards, accent=True,
+        ).pack(side="left", padx=10)
+        self.make_button(
+            btn_frame, "⬅  Retour", self.show_main_menu,
+        ).pack(side="left", padx=10)
+
+    def _launch_flashcards(self):
+        try:
+            s = int(self.fc_start_var.get())
+            e = int(self.fc_end_var.get())
+        except ValueError:
+            messagebox.showwarning("Attention", "Plage invalide (nombres).")
+            return
+
+        self.fc_cards = [
+            (n, m) for n, m in self.table if s <= int(n) <= e
+        ]
+        if not self.fc_cards:
+            messagebox.showwarning("Attention", "Aucune carte dans cette plage.")
+            return
+
+        if self.fc_shuffle_var.get():
+            random.shuffle(self.fc_cards)
+
+        self.fc_idx = 0
+        self.fc_revealed = False
+        self._show_flashcard()
+
+    def _show_flashcard(self):
+        self.clear()
+
+        nombre, mot = self.fc_cards[self.fc_idx]
+        total = len(self.fc_cards)
+        idx = self.fc_idx + 1
+
+        # Barre
+        tk.Label(
+            self.container,
+            text=f"🃏 Flashcard {idx}/{total}",
+            font=FONT_BODY_BOLD, bg=BG_DARK, fg=FG_MAUVE,
+        ).pack(pady=(20, 5))
+
+        bar = tk.Canvas(self.container, height=4, bg=BTN_BG,
+                        highlightthickness=0)
+        bar.pack(fill="x", padx=60, pady=(0, 10))
+        self.after(50, lambda: self._draw_progress(bar, idx, total))
+
+        # Carte
+        card = tk.Frame(
+            self.container, bg=FG_MAUVE, padx=3, pady=3,
+        )
+        card.pack(padx=120, pady=20, fill="x")
+
+        inner = tk.Frame(card, bg=BG_CARD, padx=30, pady=30)
+        inner.pack(fill="both", expand=True)
+
+        tk.Label(
+            inner, text=nombre, font=FONT_BIG,
+            bg=BG_CARD, fg=FG_ACCENT,
+        ).pack(pady=(10, 15))
+
+        if self.fc_revealed:
+            tk.Label(
+                inner, text="↕", font=FONT_BODY,
+                bg=BG_CARD, fg=FG_SECONDARY,
+            ).pack()
+            tk.Label(
+                inner, text=mot, font=FONT_BIG,
+                bg=BG_CARD, fg=FG_GREEN,
+            ).pack(pady=(10, 10))
+        else:
+            tk.Label(
+                inner, text="???", font=FONT_QUESTION,
+                bg=BG_CARD, fg=FG_SECONDARY,
+            ).pack(pady=(10, 10))
+
+        # Boutons
+        btn_frame = tk.Frame(self.container, bg=BG_DARK)
+        btn_frame.pack(pady=10)
+
+        if not self.fc_revealed:
+            btn = self.make_button(
+                btn_frame, "Retourner (Espace)",
+                self._reveal_flashcard, accent=True, width=22,
+            )
+            btn.pack()
+            btn.focus_set()
+            self.bind("<space>", lambda e: self._reveal_flashcard())
+            self.bind("<Return>", lambda e: self._reveal_flashcard())
+        else:
+            self.unbind("<space>")
+            self.unbind("<Return>")
+
+            if self.fc_idx < total - 1:
+                next_btn = self.make_button(
+                    btn_frame, "Suivante →", self._next_flashcard,
+                    accent=True, width=15,
+                )
+                next_btn.pack(side="left", padx=5)
+                next_btn.focus_set()
+                self.bind("<Return>", lambda e: self._next_flashcard())
+                self.bind("<Right>", lambda e: self._next_flashcard())
+            else:
+                done_btn = self.make_button(
+                    btn_frame, "Terminé ✓", self.show_main_menu,
+                    accent=True, width=15,
+                )
+                done_btn.pack(side="left", padx=5)
+                done_btn.focus_set()
+                self.bind("<Return>", lambda e: self.show_main_menu())
+
+            if self.fc_idx > 0:
+                self.make_button(
+                    btn_frame, "← Précédente", self._prev_flashcard, width=15,
+                ).pack(side="left", padx=5)
+                self.bind("<Left>", lambda e: self._prev_flashcard())
+
+        # Retour
+        self.make_button(
+            self.container, "⬅  Retour au menu", self.show_main_menu,
+        ).pack(pady=(15, 10))
+
+    def _reveal_flashcard(self):
+        self.fc_revealed = True
+        self._show_flashcard()
+
+    def _next_flashcard(self):
+        self.fc_idx += 1
+        self.fc_revealed = False
+        self._show_flashcard()
+
+    def _prev_flashcard(self):
+        self.fc_idx -= 1
+        self.fc_revealed = False
+        self._show_flashcard()
+
+    # --------------------------------------------------------
+    # Écran : Statistiques
     # --------------------------------------------------------
     def show_stats_view(self):
         self.clear()
+        self._unbind_menu_keys()
 
         tk.Label(
             self.container, text="📊 Statistiques", font=FONT_TITLE,
-            bg=BG_DARK, fg=FG_ACCENT
-        ).pack(pady=(20, 10))
+            bg=BG_DARK, fg=FG_ACCENT,
+        ).pack(pady=(20, 5))
 
-        # Tabs : Meilleurs / Pires
+        # Tabs
         tab_frame = tk.Frame(self.container, bg=BG_DARK)
-        tab_frame.pack(fill="x", padx=40)
+        tab_frame.pack(fill="x", padx=40, pady=(0, 5))
 
         self._stats_tab = tk.StringVar(value="worst")
 
         def make_tab(text, val):
-            color = FG_ACCENT if self._stats_tab.get() == val else FG_SECONDARY
+            is_active = self._stats_tab.get() == val
+            bg = BG_CARD if is_active else BG_DARK
+            fg = FG_ACCENT if is_active else FG_SECONDARY
             btn = tk.Label(
                 tab_frame, text=text, font=FONT_BODY_BOLD,
-                bg=BG_DARK, fg=color, cursor="hand2", padx=15, pady=5
+                bg=bg, fg=fg, cursor="hand2", padx=15, pady=6,
             )
-            btn.pack(side="left")
+            btn.pack(side="left", padx=(0, 2))
             btn.bind("<Button-1>", lambda e: self._switch_stats_tab(val))
-            return btn
 
         make_tab("🔻 Moins connus", "worst")
         make_tab("🔺 Plus connus", "best")
 
+        # Bouton reset
+        reset_btn = tk.Label(
+            tab_frame, text="🗑 Réinitialiser", font=FONT_SMALL,
+            bg=BG_DARK, fg=FG_RED, cursor="hand2", padx=10,
+        )
+        reset_btn.pack(side="right")
+        reset_btn.bind("<Button-1>", lambda e: self._confirm_reset_stats())
+
         # Liste
         self.stats_list_frame = tk.Frame(self.container, bg=BG_DARK)
-        self.stats_list_frame.pack(fill="both", expand=True, padx=40, pady=10)
-
+        self.stats_list_frame.pack(fill="both", expand=True, padx=40, pady=5)
         self._render_stats_list("worst")
 
-        # Retour
-        self.make_button(self.container, "⬅  Retour au menu", self.show_main_menu).pack(pady=(5, 20))
+        self.make_button(
+            self.container, "⬅  Retour au menu", self.show_main_menu,
+        ).pack(pady=(5, 15))
+
+    def _confirm_reset_stats(self):
+        if messagebox.askyesno(
+            "Réinitialiser",
+            "Remettre toutes les stats à zéro ? Cette action est irréversible.",
+        ):
+            for key in self.stats:
+                self.stats[key] = [0, 0, 0.0]
+            save_stats(self.stats)
+            self.show_stats_view()
 
     def _switch_stats_tab(self, tab):
         self._stats_tab.set(tab)
@@ -671,33 +1104,34 @@ class QuizApp(tk.Tk):
             w.destroy()
 
         reverse = mode == "best"
-        tri = sorted(self.stats.items(), key=lambda x: x[1][0] + x[1][1], reverse=reverse)
+        tri = sorted(self.stats.items(),
+                     key=lambda x: x[1][0] + x[1][1], reverse=reverse)
 
-        # Canvas with scrollbar
-        canvas = tk.Canvas(self.stats_list_frame, bg=BG_DARK, highlightthickness=0)
-        scrollbar = ttk.Scrollbar(self.stats_list_frame, orient="vertical", command=canvas.yview)
+        canvas = tk.Canvas(self.stats_list_frame, bg=BG_DARK,
+                           highlightthickness=0)
+        scrollbar = ttk.Scrollbar(self.stats_list_frame, orient="vertical",
+                                  command=canvas.yview)
         inner = tk.Frame(canvas, bg=BG_DARK)
 
-        inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        inner.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all")),
+        )
         canvas.create_window((0, 0), window=inner, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
 
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
-
-        # Bind mousewheel
-        def _on_mousewheel(event):
-            canvas.yview_scroll(-1 * (event.delta // 120 or (1 if event.delta > 0 else -1)), "units")
-
-        canvas.bind_all("<MouseWheel>", _on_mousewheel)
-        canvas.bind_all("<Button-4>", lambda e: canvas.yview_scroll(-3, "units"))
-        canvas.bind_all("<Button-5>", lambda e: canvas.yview_scroll(3, "units"))
+        self._bind_mousewheel(canvas)
 
         # Header
         hdr = tk.Frame(inner, bg=BTN_BG, pady=5)
         hdr.pack(fill="x", pady=(0, 2))
-        for text, w in [("#", 4), ("Nombre", 8), ("Mot", 18), ("N→M", 6), ("M→N", 6), ("Temps/lettre", 12)]:
-            tk.Label(hdr, text=text, font=FONT_SMALL, bg=BTN_BG, fg=FG_SECONDARY, width=w, anchor="center").pack(side="left")
+        for text, w in [("#", 4), ("Nombre", 8), ("Mot", 18),
+                        ("N→M", 6), ("M→N", 6), ("Temps/l.", 12)]:
+            tk.Label(hdr, text=text, font=FONT_SMALL, bg=BTN_BG,
+                     fg=FG_SECONDARY, width=w, anchor="center").pack(
+                side="left")
 
         for i, ((nombre, mot), vals) in enumerate(tri):
             s_nm, s_mn, t = vals
@@ -712,57 +1146,87 @@ class QuizApp(tk.Tk):
             row = tk.Frame(inner, bg=row_bg, pady=3)
             row.pack(fill="x", pady=1)
 
-            tk.Label(row, text=str(i + 1), font=FONT_SMALL, bg=row_bg, fg=FG_SECONDARY, width=4, anchor="center").pack(side="left")
-            tk.Label(row, text=nombre, font=FONT_BODY_BOLD, bg=row_bg, fg=FG_ACCENT, width=8, anchor="center").pack(side="left")
-            tk.Label(row, text=mot, font=FONT_BODY, bg=row_bg, fg=FG_PRIMARY, width=18, anchor="w").pack(side="left")
+            tk.Label(row, text=str(i + 1), font=FONT_SMALL,
+                     bg=row_bg, fg=FG_SECONDARY, width=4,
+                     anchor="center").pack(side="left")
+            tk.Label(row, text=nombre, font=FONT_BODY_BOLD,
+                     bg=row_bg, fg=FG_ACCENT, width=8,
+                     anchor="center").pack(side="left")
+            tk.Label(row, text=mot, font=FONT_BODY,
+                     bg=row_bg, fg=FG_PRIMARY, width=18,
+                     anchor="w").pack(side="left")
 
-            nm_color = FG_GREEN if s_nm > 0 else (FG_RED if s_nm < 0 else FG_SECONDARY)
-            mn_color = FG_GREEN if s_mn > 0 else (FG_RED if s_mn < 0 else FG_SECONDARY)
+            nm_color = (FG_GREEN if s_nm > 0
+                        else (FG_RED if s_nm < 0 else FG_SECONDARY))
+            mn_color = (FG_GREEN if s_mn > 0
+                        else (FG_RED if s_mn < 0 else FG_SECONDARY))
 
-            tk.Label(row, text=str(s_nm), font=FONT_BODY, bg=row_bg, fg=nm_color, width=6, anchor="center").pack(side="left")
-            tk.Label(row, text=str(s_mn), font=FONT_BODY, bg=row_bg, fg=mn_color, width=6, anchor="center").pack(side="left")
+            tk.Label(row, text=str(s_nm), font=FONT_BODY,
+                     bg=row_bg, fg=nm_color, width=6,
+                     anchor="center").pack(side="left")
+            tk.Label(row, text=str(s_mn), font=FONT_BODY,
+                     bg=row_bg, fg=mn_color, width=6,
+                     anchor="center").pack(side="left")
 
             t_text = f"{t:.2f}s" if t > 0 else "—"
-            tk.Label(row, text=t_text, font=FONT_SMALL, bg=row_bg, fg=FG_SECONDARY, width=12, anchor="center").pack(side="left")
+            tk.Label(row, text=t_text, font=FONT_SMALL,
+                     bg=row_bg, fg=FG_SECONDARY, width=12,
+                     anchor="center").pack(side="left")
 
     # --------------------------------------------------------
     # Écran : Parcourir la table
     # --------------------------------------------------------
     def show_table_view(self):
         self.clear()
+        self._unbind_menu_keys()
 
         tk.Label(
             self.container, text="📖 Table de Rappel", font=FONT_TITLE,
-            bg=BG_DARK, fg=FG_ACCENT
-        ).pack(pady=(20, 10))
+            bg=BG_DARK, fg=FG_ACCENT,
+        ).pack(pady=(20, 8))
 
-        # Search
+        # Barre de recherche
         search_frame = tk.Frame(self.container, bg=BG_DARK)
-        search_frame.pack(fill="x", padx=60, pady=(0, 10))
+        search_frame.pack(fill="x", padx=60, pady=(0, 8))
 
-        tk.Label(search_frame, text="🔍", font=FONT_BODY, bg=BG_DARK, fg=FG_SECONDARY).pack(side="left", padx=(0, 5))
+        tk.Label(search_frame, text="🔍", font=FONT_BODY,
+                 bg=BG_DARK, fg=FG_SECONDARY).pack(side="left", padx=(0, 5))
         self.search_var = tk.StringVar()
         self.search_var.trace_add("write", lambda *_: self._filter_table())
         search_entry = tk.Entry(
             search_frame, textvariable=self.search_var,
             font=FONT_BODY, bg=BG_INPUT, fg=FG_PRIMARY,
-            insertbackground=FG_PRIMARY, relief="flat", width=30
+            insertbackground=FG_PRIMARY, relief="flat", width=30,
         )
         search_entry.pack(side="left", ipady=4)
         search_entry.focus_set()
 
-        # Table area
+        # Légende
+        legend = tk.Frame(self.container, bg=BG_DARK)
+        legend.pack(padx=60, anchor="w")
+        for label, color in [("Maîtrisé", FG_GREEN), ("En cours", FG_YELLOW),
+                             ("À revoir", FG_RED), ("Non vu", BTN_BG)]:
+            tk.Label(legend, text="●", font=FONT_SMALL, bg=BG_DARK,
+                     fg=color).pack(side="left", padx=(0, 2))
+            tk.Label(legend, text=label, font=FONT_SMALL, bg=BG_DARK,
+                     fg=FG_SECONDARY).pack(side="left", padx=(0, 12))
+
+        # Zone table
         self.table_frame = tk.Frame(self.container, bg=BG_DARK)
         self.table_frame.pack(fill="both", expand=True, padx=40, pady=5)
-
         self._render_table_cards(self.table)
 
-        self.make_button(self.container, "⬅  Retour au menu", self.show_main_menu).pack(pady=(5, 15))
+        self.make_button(
+            self.container, "⬅  Retour au menu", self.show_main_menu,
+        ).pack(pady=(5, 12))
 
     def _filter_table(self):
         query = self.search_var.get().strip().lower()
         if query:
-            filtered = [(n, m) for n, m in self.table if query in n.lower() or query in m.lower()]
+            filtered = [
+                (n, m) for n, m in self.table
+                if query in n.lower() or query in m.lower()
+            ]
         else:
             filtered = self.table
         self._render_table_cards(filtered)
@@ -771,29 +1235,27 @@ class QuizApp(tk.Tk):
         for w in self.table_frame.winfo_children():
             w.destroy()
 
-        canvas = tk.Canvas(self.table_frame, bg=BG_DARK, highlightthickness=0)
-        scrollbar = ttk.Scrollbar(self.table_frame, orient="vertical", command=canvas.yview)
+        canvas = tk.Canvas(self.table_frame, bg=BG_DARK,
+                           highlightthickness=0)
+        scrollbar = ttk.Scrollbar(self.table_frame, orient="vertical",
+                                  command=canvas.yview)
         inner = tk.Frame(canvas, bg=BG_DARK)
 
-        inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        inner.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all")),
+        )
         canvas.create_window((0, 0), window=inner, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
 
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
-
-        def _on_mousewheel(event):
-            canvas.yview_scroll(-1 * (event.delta // 120 or (1 if event.delta > 0 else -1)), "units")
-
-        canvas.bind_all("<MouseWheel>", _on_mousewheel)
-        canvas.bind_all("<Button-4>", lambda e: canvas.yview_scroll(-3, "units"))
-        canvas.bind_all("<Button-5>", lambda e: canvas.yview_scroll(3, "units"))
+        self._bind_mousewheel(canvas)
 
         cols = 5
         for i, (nombre, mot) in enumerate(items):
             r, c = divmod(i, cols)
 
-            # Get score color
             vals = self.stats.get((nombre, mot), [0, 0, 0.0])
             total_s = vals[0] + vals[1]
             if total_s >= 4:
@@ -813,15 +1275,15 @@ class QuizApp(tk.Tk):
 
             tk.Label(
                 inner_cell, text=nombre, font=FONT_BODY_BOLD,
-                bg=BG_CARD, fg=FG_ACCENT
+                bg=BG_CARD, fg=FG_ACCENT,
             ).pack()
             tk.Label(
                 inner_cell, text=mot, font=FONT_SMALL,
-                bg=BG_CARD, fg=FG_PRIMARY
+                bg=BG_CARD, fg=FG_PRIMARY,
             ).pack()
 
         for c in range(cols):
-            inner.columnconfigure(c, weight=1, minsize=140)
+            inner.columnconfigure(c, weight=1, minsize=150)
 
 
 # ============================================================
