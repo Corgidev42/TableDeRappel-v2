@@ -26,8 +26,8 @@ from tkinter import ttk, messagebox
 BG_DARK = "#1e1e2e"
 BG_CARD = "#2a2a3d"
 BG_INPUT = "#3a3a5c"
-FG_PRIMARY = "#cdd6f4"
-FG_SECONDARY = "#a6adc8"
+FG_PRIMARY = "#e4e8f7"          # brighter white for better contrast
+FG_SECONDARY = "#b0b8d1"        # slightly brighter secondary
 FG_ACCENT = "#89b4fa"
 FG_GREEN = "#a6e3a1"
 FG_RED = "#f38ba8"
@@ -36,8 +36,12 @@ FG_MAUVE = "#cba6f7"
 FG_ORANGE = "#fab387"
 BTN_BG = "#45475a"
 BTN_HOVER = "#585b70"
-BTN_ACCENT = "#89b4fa"
-BTN_ACCENT_FG = "#1e1e2e"
+BTN_ACCENT = "#5d8fd6"           # darker blue for better text contrast
+BTN_ACCENT_FG = "#ffffff"        # white text on accent buttons
+TAB_ACTIVE_BG = "#3d3f58"        # visible active tab background
+TAB_ACTIVE_FG = "#ffffff"        # bright white active tab text
+CHECK_ON = "#a6e3a1"             # green indicator when checked
+CHECK_BG = "#2a2a3d"             # checkbox background
 
 FONT_TITLE = ("Helvetica", 28, "bold")
 FONT_SUBTITLE = ("Helvetica", 16)
@@ -136,6 +140,7 @@ class QuizApp(tk.Tk):
         self.question_start_time = 0
         self.results = []  # (mode, nombre, mot, user_answer, correct, time)
         self._auto_advance_id = None
+        self._stats_sort_tab = "worst"  # persistent stats sort state
 
         # Container principal
         self.container = tk.Frame(self, bg=BG_DARK)
@@ -161,9 +166,9 @@ class QuizApp(tk.Tk):
     def make_button(self, parent, text, command, accent=False, width=25,
                     danger=False):
         if danger:
-            bg, fg, hover_bg = FG_RED, "#1e1e2e", "#e06080"
+            bg, fg, hover_bg = FG_RED, "#ffffff", "#e06080"
         elif accent:
-            bg, fg, hover_bg = BTN_ACCENT, BTN_ACCENT_FG, "#7aa2f7"
+            bg, fg, hover_bg = BTN_ACCENT, BTN_ACCENT_FG, "#4a7abd"
         else:
             bg, fg, hover_bg = BTN_BG, FG_PRIMARY, BTN_HOVER
 
@@ -342,10 +347,11 @@ class QuizApp(tk.Tk):
             var = tk.BooleanVar(value=False)
             self.bloc_vars[i] = var
             cb = tk.Checkbutton(
-                blocs_frame, text=f"{start:>3}–{end}", variable=var,
-                font=FONT_BODY, bg=BG_CARD, fg=FG_PRIMARY,
-                selectcolor=BG_INPUT, activebackground=BG_CARD,
-                activeforeground=FG_PRIMARY, highlightthickness=0,
+                blocs_frame, text=f"  {start:>3}–{end}", variable=var,
+                font=FONT_BODY_BOLD, bg=BG_CARD, fg=FG_PRIMARY,
+                selectcolor=CHECK_BG, activebackground=BG_CARD,
+                activeforeground=CHECK_ON, highlightthickness=0,
+                indicatoron=True, onvalue=True, offvalue=False,
             )
             cb.grid(row=i // 4, column=i % 4, padx=12, pady=5, sticky="w")
 
@@ -391,10 +397,11 @@ class QuizApp(tk.Tk):
         for text, val in [("Nombre → Mot", "1"), ("Mot → Nombre", "2"),
                           ("Les deux", "3")]:
             tk.Radiobutton(
-                sens_frame, text=text, variable=self.sens_var, value=val,
-                font=FONT_BODY, bg=BG_CARD, fg=FG_PRIMARY,
-                selectcolor=BG_INPUT, activebackground=BG_CARD,
-                activeforeground=FG_PRIMARY, highlightthickness=0,
+                sens_frame, text=f"  {text}", variable=self.sens_var,
+                value=val,
+                font=FONT_BODY_BOLD, bg=BG_CARD, fg=FG_PRIMARY,
+                selectcolor=CHECK_BG, activebackground=BG_CARD,
+                activeforeground=CHECK_ON, highlightthickness=0,
             ).pack(side="left", padx=8)
 
     def _start_bloc_quiz(self):
@@ -465,8 +472,8 @@ class QuizApp(tk.Tk):
             tk.Radiobutton(
                 f, text=f"  {title}", variable=self.sens_var, value=val,
                 font=FONT_BODY_BOLD, bg=BG_CARD, fg=FG_PRIMARY,
-                selectcolor=BG_INPUT, activebackground=BG_CARD,
-                activeforeground=FG_PRIMARY, highlightthickness=0, anchor="w",
+                selectcolor=CHECK_BG, activebackground=BG_CARD,
+                activeforeground=CHECK_ON, highlightthickness=0, anchor="w",
             ).pack(anchor="w")
             tk.Label(f, text=f"       {desc}", font=FONT_SMALL,
                      bg=BG_CARD, fg=FG_SECONDARY).pack(anchor="w")
@@ -891,10 +898,10 @@ class QuizApp(tk.Tk):
         # Mélanger ?
         self.fc_shuffle_var = tk.BooleanVar(value=True)
         tk.Checkbutton(
-            card, text="Ordre aléatoire", variable=self.fc_shuffle_var,
-            font=FONT_BODY, bg=BG_CARD, fg=FG_PRIMARY,
-            selectcolor=BG_INPUT, activebackground=BG_CARD,
-            highlightthickness=0,
+            card, text="  Ordre aléatoire", variable=self.fc_shuffle_var,
+            font=FONT_BODY_BOLD, bg=BG_CARD, fg=FG_PRIMARY,
+            selectcolor=CHECK_BG, activebackground=BG_CARD,
+            activeforeground=CHECK_ON, highlightthickness=0,
         ).pack(anchor="w", pady=5)
 
         btn_frame = tk.Frame(self.container, bg=BG_DARK)
@@ -1048,22 +1055,30 @@ class QuizApp(tk.Tk):
             bg=BG_DARK, fg=FG_ACCENT,
         ).pack(pady=(20, 5))
 
-        # Tabs
+        # Tabs — use persistent sort state
         tab_frame = tk.Frame(self.container, bg=BG_DARK)
         tab_frame.pack(fill="x", padx=40, pady=(0, 5))
 
-        self._stats_tab = tk.StringVar(value="worst")
+        current_tab = self._stats_sort_tab
 
         def make_tab(text, val):
-            is_active = self._stats_tab.get() == val
-            bg = BG_CARD if is_active else BG_DARK
-            fg = FG_ACCENT if is_active else FG_SECONDARY
+            is_active = current_tab == val
+            bg = TAB_ACTIVE_BG if is_active else BG_DARK
+            fg = TAB_ACTIVE_FG if is_active else FG_SECONDARY
             btn = tk.Label(
                 tab_frame, text=text, font=FONT_BODY_BOLD,
                 bg=bg, fg=fg, cursor="hand2", padx=15, pady=6,
+                relief="flat",
             )
             btn.pack(side="left", padx=(0, 2))
+            if is_active:
+                # Bright underline for active tab
+                underline = tk.Frame(tab_frame, bg=FG_ACCENT, height=3)
+                underline.pack(side="left", fill="x", padx=(0, 2))
             btn.bind("<Button-1>", lambda e: self._switch_stats_tab(val))
+            btn.bind("<Enter>", lambda e: btn.configure(
+                bg=TAB_ACTIVE_BG if not is_active else bg))
+            btn.bind("<Leave>", lambda e: btn.configure(bg=bg))
 
         make_tab("🔻 Moins connus", "worst")
         make_tab("🔺 Plus connus", "best")
@@ -1079,7 +1094,7 @@ class QuizApp(tk.Tk):
         # Liste
         self.stats_list_frame = tk.Frame(self.container, bg=BG_DARK)
         self.stats_list_frame.pack(fill="both", expand=True, padx=40, pady=5)
-        self._render_stats_list("worst")
+        self._render_stats_list(current_tab)
 
         self.make_button(
             self.container, "⬅  Retour au menu", self.show_main_menu,
@@ -1096,7 +1111,7 @@ class QuizApp(tk.Tk):
             self.show_stats_view()
 
     def _switch_stats_tab(self, tab):
-        self._stats_tab.set(tab)
+        self._stats_sort_tab = tab
         self.show_stats_view()
 
     def _render_stats_list(self, mode):
@@ -1216,9 +1231,14 @@ class QuizApp(tk.Tk):
         self.table_frame.pack(fill="both", expand=True, padx=40, pady=5)
         self._render_table_cards(self.table)
 
+        btn_bar = tk.Frame(self.container, bg=BG_DARK)
+        btn_bar.pack(pady=(5, 12))
         self.make_button(
-            self.container, "⬅  Retour au menu", self.show_main_menu,
-        ).pack(pady=(5, 12))
+            btn_bar, "⬅  Retour au menu", self.show_main_menu,
+        ).pack(side="left", padx=5)
+        self.make_button(
+            btn_bar, "✏️  Modifier la table", self._show_edit_table,
+        ).pack(side="left", padx=5)
 
     def _filter_table(self):
         query = self.search_var.get().strip().lower()
@@ -1284,6 +1304,171 @@ class QuizApp(tk.Tk):
 
         for c in range(cols):
             inner.columnconfigure(c, weight=1, minsize=150)
+
+    # --------------------------------------------------------
+    # Écran : Éditer la table
+    # --------------------------------------------------------
+    def _show_edit_table(self):
+        self.clear()
+        self._unbind_menu_keys()
+
+        tk.Label(
+            self.container, text="✏️ Modifier la table", font=FONT_TITLE,
+            bg=BG_DARK, fg=FG_ACCENT,
+        ).pack(pady=(20, 5))
+        tk.Label(
+            self.container,
+            text="Modifie les mots associés à chaque nombre. "
+                 "Les changements sont sauvegardés au clic.",
+            font=FONT_BODY, bg=BG_DARK, fg=FG_SECONDARY,
+        ).pack(pady=(0, 10))
+
+        # Scrollable edit area
+        edit_outer = tk.Frame(self.container, bg=BG_DARK)
+        edit_outer.pack(fill="both", expand=True, padx=40, pady=5)
+
+        canvas = tk.Canvas(edit_outer, bg=BG_DARK, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(edit_outer, orient="vertical",
+                                  command=canvas.yview)
+        inner = tk.Frame(canvas, bg=BG_DARK)
+
+        inner.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all")),
+        )
+        canvas.create_window((0, 0), window=inner, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        self._bind_mousewheel(canvas)
+
+        # Header row
+        hdr = tk.Frame(inner, bg=BTN_BG, pady=6)
+        hdr.pack(fill="x", pady=(0, 4))
+        tk.Label(hdr, text="Nombre", font=FONT_BODY_BOLD, bg=BTN_BG,
+                 fg=FG_PRIMARY, width=10, anchor="center").pack(side="left")
+        tk.Label(hdr, text="Mot actuel", font=FONT_BODY_BOLD, bg=BTN_BG,
+                 fg=FG_PRIMARY, width=20, anchor="center").pack(side="left")
+        tk.Label(hdr, text="Nouveau mot", font=FONT_BODY_BOLD, bg=BTN_BG,
+                 fg=FG_PRIMARY, width=20, anchor="center").pack(side="left")
+        tk.Label(hdr, text="", font=FONT_BODY_BOLD, bg=BTN_BG,
+                 fg=FG_PRIMARY, width=12).pack(side="left")
+
+        self._edit_entries = {}  # nombre -> StringVar
+
+        for i, (nombre, mot) in enumerate(self.table):
+            row_bg = BG_CARD if i % 2 == 0 else "#252540"
+            row = tk.Frame(inner, bg=row_bg, pady=4)
+            row.pack(fill="x", pady=1)
+
+            # Nombre
+            tk.Label(row, text=nombre, font=FONT_BODY_BOLD,
+                     bg=row_bg, fg=FG_ACCENT, width=10,
+                     anchor="center").pack(side="left")
+
+            # Mot actuel
+            tk.Label(row, text=mot, font=FONT_BODY,
+                     bg=row_bg, fg=FG_PRIMARY, width=20,
+                     anchor="center").pack(side="left")
+
+            # Champ édition
+            var = tk.StringVar(value=mot)
+            self._edit_entries[nombre] = var
+            entry = tk.Entry(
+                row, textvariable=var, font=FONT_BODY,
+                bg=BG_INPUT, fg=FG_PRIMARY, insertbackground=FG_PRIMARY,
+                relief="flat", width=20, justify="center",
+            )
+            entry.pack(side="left", padx=5, ipady=3)
+
+            # Bouton sauvegarder cette ligne
+            save_btn = tk.Button(
+                row, text="💾", font=FONT_BODY,
+                bg=BTN_BG, fg=FG_GREEN, relief="flat",
+                cursor="hand2", width=3,
+                command=lambda n=nombre, v=var, r=row: self._save_one_entry(
+                    n, v, r),
+            )
+            save_btn.pack(side="left", padx=5)
+
+        # Bottom buttons
+        btn_frame = tk.Frame(self.container, bg=BG_DARK)
+        btn_frame.pack(pady=(10, 12))
+        self.make_button(
+            btn_frame, "💾  Tout sauvegarder", self._save_all_entries,
+            accent=True,
+        ).pack(side="left", padx=5)
+        self.make_button(
+            btn_frame, "⬅  Retour à la table", self.show_table_view,
+        ).pack(side="left", padx=5)
+
+    def _save_one_entry(self, nombre, var, row_frame):
+        """Sauvegarde un seul mot modifié."""
+        new_mot = var.get().strip()
+        if not new_mot:
+            return
+
+        # Trouver l'ancienne paire et mettre à jour
+        for idx, (n, m) in enumerate(self.table):
+            if n == nombre:
+                old_mot = m
+                if new_mot != old_mot:
+                    # Mettre à jour la table
+                    self.table[idx] = (nombre, new_mot)
+
+                    # Transférer les stats
+                    old_key = (nombre, old_mot)
+                    new_key = (nombre, new_mot)
+                    if old_key in self.stats:
+                        self.stats[new_key] = self.stats.pop(old_key)
+                    elif new_key not in self.stats:
+                        self.stats[new_key] = [0, 0, 0.0]
+
+                    # Flash vert pour confirmer
+                    row_frame.configure(bg=FG_GREEN)
+                    self.after(400, lambda rf=row_frame: rf.configure(
+                        bg=BG_CARD))
+                break
+
+        self._persist_table()
+
+    def _save_all_entries(self):
+        """Sauvegarde toutes les modifications de la table."""
+        changes = 0
+        for idx, (nombre, old_mot) in enumerate(list(self.table)):
+            var = self._edit_entries.get(nombre)
+            if var:
+                new_mot = var.get().strip()
+                if new_mot and new_mot != old_mot:
+                    self.table[idx] = (nombre, new_mot)
+                    old_key = (nombre, old_mot)
+                    new_key = (nombre, new_mot)
+                    if old_key in self.stats:
+                        self.stats[new_key] = self.stats.pop(old_key)
+                    elif new_key not in self.stats:
+                        self.stats[new_key] = [0, 0, 0.0]
+                    changes += 1
+
+        self._persist_table()
+        save_stats(self.stats)
+
+        if changes > 0:
+            messagebox.showinfo(
+                "Sauvegardé",
+                f"{changes} modification(s) enregistrée(s) !",
+            )
+        else:
+            messagebox.showinfo("Rien à faire", "Aucune modification détectée.")
+
+    def _persist_table(self):
+        """Écrit la table de rappel dans le CSV."""
+        with open(TABLE_FILE, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["Nombre", "Mot"])
+            for nombre, mot in self.table:
+                writer.writerow([nombre, mot])
+        save_stats(self.stats)
 
 
 # ============================================================
