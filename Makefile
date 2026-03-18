@@ -5,7 +5,7 @@
 PYTHON  ?= python3
 GUI     := quiz_rappel_gui.py
 CLI     := quiz_rappel.py
-STATS   := stats_rappel.csv
+STATS   := .app_data/stats.json
 
 VERSION := $(shell grep -E '^VERSION = ' $(GUI) | cut -d'"' -f2)
 DMG    := dist/TableDeRappel-$(VERSION).dmg
@@ -65,12 +65,7 @@ publish: tag release
 ## reset : Remet les statistiques à zéro
 reset:
 	@echo "⚠️  Réinitialisation des stats…"
-	@if [ -f $(STATS) ]; then \
-		head -1 $(STATS) > $(STATS).tmp && mv $(STATS).tmp $(STATS); \
-		echo "✅ Stats réinitialisées (header conservé)"; \
-	else \
-		echo "ℹ️  Pas de fichier stats trouvé"; \
-	fi
+	@rm -f $(STATS) 2>/dev/null && echo "✅ Stats réinitialisées" || echo "ℹ️  Pas de fichier stats trouvé"
 
 ## help : Affiche cette aide
 help:

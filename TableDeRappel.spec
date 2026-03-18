@@ -1,16 +1,20 @@
 # -*- mode: python ; coding: utf-8 -*-
 # PyInstaller spec pour Table de Rappel — génère un .app macOS
 
+import re
+
 block_cipher = None
+
+# Lire VERSION depuis le code source
+with open('quiz_rappel_gui.py', encoding='utf-8') as f:
+    _v = re.search(r'VERSION\s*=\s*"([^"]+)"', f.read())
+    APP_VERSION = _v.group(1) if _v else '0.0.0'
 
 a = Analysis(
     ['quiz_rappel_gui.py'],
     pathex=[],
     binaries=[],
-    datas=[
-        ('table_rappel.csv', '.'),
-        ('stats_rappel.csv', '.'),
-    ],
+    datas=[],  # Plus de CSV — table intégrée, stats en JSON
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -53,5 +57,17 @@ coll = COLLECT(
     name='Table de Rappel',
 )
 
-# Sur macOS, PyInstaller crée un .app quand on utilise --windowed
-# Le spec est conçu pour --onedir (COLLECT) qui produit le .app
+# Bundle macOS avec version dans Info.plist (CFBundleShortVersionString)
+app = BUNDLE(
+    coll,
+    name='Table de Rappel.app',
+    icon=None,
+    bundle_identifier='com.TableDeRappel.app',
+    version=APP_VERSION,
+    info_plist={
+        'CFBundleShortVersionString': APP_VERSION,
+        'CFBundleVersion': APP_VERSION,
+        'NSPrincipalClass': 'NSApplication',
+        'NSHighResolutionCapable': True,
+    },
+)

@@ -13,11 +13,9 @@ Améliorations v2 :
   - Meilleure UX globale
 """
 
-import csv
 import json
 import os
 import random
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -29,7 +27,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 # Version — incrémenter à chaque release (ex: v1.0.1)
-VERSION = "1.0.3"
+VERSION = "1.0.4"
 GITHUB_REPO = "Corgidev42/TableDeRappel-v2"
 
 # ============================================================
@@ -70,36 +68,55 @@ FONT_STREAK = ("Helvetica", 15, "bold")
 AUTO_ADVANCE_MS = 1200
 
 # ============================================================
-# Données — chemins adaptés pour .app (bundle read-only)
+# Données — table intégrée, stats en JSON (plus de CSV externe)
 # ============================================================
-def _get_data_paths():
-    """Retourne (table_path, stats_path) pour dev ou .app."""
-    if getattr(sys, "frozen", False):
-        # Mode .app : données dans ~/Library/Application Support
-        app_support = os.path.join(
-            os.path.expanduser("~"),
-            "Library", "Application Support", "TableDeRappel"
-        )
-        os.makedirs(app_support, exist_ok=True)
-        bundle_dir = sys._MEIPASS  # ressources du bundle
-        table_bundle = os.path.join(bundle_dir, "table_rappel.csv")
-        stats_bundle = os.path.join(bundle_dir, "stats_rappel.csv")
-        table_path = os.path.join(app_support, "table_rappel.csv")
-        stats_path = os.path.join(app_support, "stats_rappel.csv")
-        # Copier la table par défaut si pas encore initialisée
-        if not os.path.exists(table_path) and os.path.exists(table_bundle):
-            shutil.copy(table_bundle, table_path)
-        if not os.path.exists(stats_path) and os.path.exists(stats_bundle):
-            shutil.copy(stats_bundle, stats_path)
-        return table_path, stats_path
-    # Mode développement
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    return (
-        os.path.join(base_dir, "table_rappel.csv"),
-        os.path.join(base_dir, "stats_rappel.csv"),
-    )
 
-TABLE_FILE, STATS_FILE = _get_data_paths()
+# Table de rappel intégrée dans l'app (nombre, mot)
+TABLE_EMBEDDED = [
+    ("0", "bulle"), ("1", "sapin"), ("2", "cygne"), ("3", "croix"), ("4", "platre"),
+    ("5", "main"), ("6", "scie"), ("7", "tete"), ("8", "huitre"), ("9", "oeuf"),
+    ("10", "saucisse"), ("11", "bronze"), ("12", "pelouse"), ("13", "fraise"),
+    ("14", "gateau"), ("15", "samu"), ("16", "billet"), ("17", "police"),
+    ("18", "pompier"), ("19", "omelette"), ("20", "bouteille de vin"),
+    ("21", "assassin"), ("22", "coeur"), ("23", "doigt"), ("24", "tarte"),
+    ("25", "cintre"), ("26", "cerise"), ("27", "crepe"), ("28", "pipe"),
+    ("29", "crane"), ("30", "pet"), ("31", "pain"), ("32", "pneu"),
+    ("33", "petit poid"), ("34", "pirate"), ("35", "pince"), ("36", "pastis"),
+    ("37", "prophete"), ("38", "perle"), ("39", "pichet"), ("40", "carotte"),
+    ("41", "catin"), ("42", "ordinateur"), ("43", "chat"), ("44", "voiture"),
+    ("45", "siamois"), ("46", "cassis"), ("47", "chaussette"), ("48", "volcan"),
+    ("49", "echelle"), ("50", "maison"), ("51", "marin"), ("52", "merde"),
+    ("53", "maroilles"), ("54", "moto"), ("55", "miroir"), ("56", "marise"),
+    ("57", "marteau"), ("58", "manette"), ("59", "mouchoir"), ("60", "cle"),
+    ("61", "chien"), ("62", "cheveux"), ("63", "couronne"), ("64", "chevalier"),
+    ("65", "coffre"), ("66", "cacao"), ("67", "cassette"), ("68", "cabane"),
+    ("69", "ciseau"), ("70", "the"), ("71", "train"), ("72", "tarlouze"),
+    ("73", "telephone"), ("74", "tarzan"), ("75", "tour eiffel"), ("76", "tourne vis"),
+    ("77", "trotinette"), ("78", "truite"), ("79", "titeuf"), ("80", "de"),
+    ("81", "druide"), ("83", "demon"), ("84", "docteur"), ("85", "dinosaure"),
+    ("88", "dodo"), ("89", "dragon"), ("90", "danseuse"), ("91", "fleur"),
+    ("92", "ballon"), ("93", "mousquetaire"), ("94", "parapluie"),
+    ("95", "sac a dos"), ("96", "tapis"), ("97", "guitare"), ("98", "soleil"),
+    ("99", "lune"), ("100", "sablier"),
+]
+
+
+def _get_app_support_dir():
+    """Dossier des données utilisateur (dev ou .app)."""
+    if getattr(sys, "frozen", False):
+        path = os.path.join(os.path.expanduser("~"), "Library", "Application Support", "TableDeRappel")
+    else:
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".app_data")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def _stats_path():
+    return os.path.join(_get_app_support_dir(), "stats.json")
+
+
+def _table_path():
+    return os.path.join(_get_app_support_dir(), "table.json")
 
 
 # ============================================================
@@ -239,31 +256,39 @@ def download_and_open_dmg(url, callback):
 
 
 def load_table():
-    """Charge la table de rappel depuis le CSV."""
-    table = []
-    with open(TABLE_FILE, encoding="utf-8") as f:
-        reader = csv.reader(f)
-        next(reader)  # header
-        for row in reader:
-            if len(row) >= 2 and row[1].strip():
-                table.append((row[0].strip(), row[1].strip()))
-    return table
+    """Charge la table (table.json si modifiée, sinon TABLE_EMBEDDED)."""
+    path = _table_path()
+    if os.path.exists(path):
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+                return [tuple(row) for row in data]
+        except (json.JSONDecodeError, TypeError):
+            pass
+    return list(TABLE_EMBEDDED)
+
+
+STATS_KEY_SEP = "\x01"
+
+
+def _stats_key(nombre, mot):
+    return f"{nombre}{STATS_KEY_SEP}{mot}"
 
 
 def load_stats(table):
-    """Charge ou initialise les stats."""
+    """Charge les stats depuis stats.json."""
     stats = {}
-    if os.path.exists(STATS_FILE):
-        with open(STATS_FILE, encoding="utf-8") as f:
-            reader = csv.reader(f)
-            next(reader)
-            for row in reader:
-                if len(row) == 4:
-                    nombre, mot, s_nm, s_mn = row
-                    stats[(nombre, mot)] = [int(s_nm), int(s_mn), 0.0]
-                elif len(row) >= 5:
-                    nombre, mot, s_nm, s_mn, t = row
-                    stats[(nombre, mot)] = [int(s_nm), int(s_mn), float(t)]
+    path = _stats_path()
+    if os.path.exists(path):
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+                for key, vals in data.items():
+                    if STATS_KEY_SEP in key and isinstance(vals, list) and len(vals) >= 3:
+                        n, m = key.split(STATS_KEY_SEP, 1)
+                        stats[(n, m)] = [int(vals[0]), int(vals[1]), float(vals[2])]
+        except (json.JSONDecodeError, TypeError):
+            pass
     for nombre, mot in table:
         if (nombre, mot) not in stats:
             stats[(nombre, mot)] = [0, 0, 0.0]
@@ -271,16 +296,11 @@ def load_stats(table):
 
 
 def save_stats(stats):
-    """Sauvegarde les stats (écriture immédiate sur disque)."""
-    stats_dir = os.path.dirname(STATS_FILE)
-    if stats_dir:
-        os.makedirs(stats_dir, exist_ok=True)
-    with open(STATS_FILE, "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        writer.writerow(["Nombre", "Mot", "Score_nombre->mot",
-                         "Score_mot->nombre", "Temps_moyen_par_lettre"])
-        for (nombre, mot), (s_nm, s_mn, t) in stats.items():
-            writer.writerow([nombre, mot, s_nm, s_mn, f"{t:.3f}"])
+    """Sauvegarde les stats en JSON (écriture immédiate)."""
+    path = _stats_path()
+    data = {_stats_key(n, m): [s_nm, s_mn, t] for (n, m), (s_nm, s_mn, t) in stats.items()}
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=0)
         f.flush()
         os.fsync(f.fileno())
 
@@ -403,10 +423,13 @@ class QuizApp(tk.Tk):
             self.container, text="🧠 Table de Rappel", font=FONT_TITLE,
             bg=BG_DARK, fg=FG_ACCENT,
         ).pack(pady=(35, 3))
-        tk.Label(
-            self.container, text="Entraîne ta mémoire avec le système majeur",
+        about_lbl = tk.Label(
+            self.container, text=f"Entraîne ta mémoire avec le système majeur · v{VERSION}",
             font=FONT_SUBTITLE, bg=BG_DARK, fg=FG_SECONDARY,
-        ).pack(pady=(0, 25))
+            cursor="hand2",
+        )
+        about_lbl.pack(pady=(0, 25))
+        about_lbl.bind("<Button-1>", lambda e: self._show_about())
 
         # Stats résumé
         total = len(self.stats)
@@ -515,6 +538,17 @@ class QuizApp(tk.Tk):
                 canvas.create_rectangle(x, 0, x + seg_w, 12,
                                         fill=color, outline="")
             x += seg_w
+
+    def _show_about(self):
+        """Affiche version et chemin de l'app."""
+        app_path = _get_app_bundle_path()
+        path_info = app_path if app_path else sys.executable
+        messagebox.showinfo(
+            "À propos",
+            f"Table de Rappel v{VERSION}\n\n"
+            f"Chemin : {path_info}\n\n"
+            "(Clic pour vérifier les mises à jour)",
+        )
 
     def _check_update(self):
         """Vérifie les mises à jour et affiche une boîte de dialogue."""
@@ -1727,12 +1761,13 @@ class QuizApp(tk.Tk):
             messagebox.showinfo("Rien à faire", "Aucune modification détectée.")
 
     def _persist_table(self):
-        """Écrit la table de rappel dans le CSV."""
-        with open(TABLE_FILE, "w", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f)
-            writer.writerow(["Nombre", "Mot"])
-            for nombre, mot in self.table:
-                writer.writerow([nombre, mot])
+        """Écrit la table modifiée en JSON."""
+        path = _table_path()
+        data = [[n, m] for n, m in self.table]
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=0)
+            f.flush()
+            os.fsync(f.fileno())
         save_stats(self.stats)
 
 
