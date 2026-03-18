@@ -7,7 +7,10 @@ GUI     := quiz_rappel_gui.py
 CLI     := quiz_rappel.py
 STATS   := stats_rappel.csv
 
-.PHONY: run cli check clean reset dmg help
+VERSION := $(shell grep -E '^VERSION = ' $(GUI) | cut -d'"' -f2)
+DMG    := dist/TableDeRappel-$(VERSION).dmg
+
+.PHONY: run cli check clean reset dmg tag release publish help
 
 ## run : Lance le quiz (interface graphique)
 run:
@@ -33,8 +36,29 @@ clean:
 
 ## dmg : Crée l'app .app et le .dmg (macOS)
 dmg:
-	@pip install -q pyinstaller 2>/dev/null || true
 	@chmod +x build_dmg.sh && ./build_dmg.sh
+
+## tag : Crée et pousse le tag git pour la version courante
+tag:
+	@git tag -a v$(VERSION) -m "v$(VERSION)" 2>/dev/null || true
+	@git push origin v$(VERSION)
+
+## release : Build .dmg + push la release sur GitHub
+release: dmg
+	@echo "📤 Publication sur GitHub…"
+	@test -n "$(VERSION)" || { echo "❌ VERSION introuvable dans $(GUI)"; exit 1; }
+	@command -v gh >/dev/null 2>&1 || { echo "❌ gh CLI requis : brew install gh && gh auth login"; exit 1; }
+	@test -f $(DMG) || { echo "❌ $(DMG) introuvable"; exit 1; }
+	@if gh release view v$(VERSION) >/dev/null 2>&1; then \
+		gh release upload v$(VERSION) $(DMG) --clobber; \
+	else \
+		gh release create v$(VERSION) $(DMG) --title "v$(VERSION)" \
+			--notes "Table de Rappel v$(VERSION) — Sauvegarde des stats en temps réel."; \
+	fi
+	@echo "✅ Release v$(VERSION) : https://github.com/Corgidev42/TableDeRappel-v2/releases/tag/v$(VERSION)"
+
+## publish : tag + release (tout-en-un : commit/push d'abord!)
+publish: tag release
 
 ## reset : Remet les statistiques à zéro
 reset:

@@ -19,7 +19,13 @@ echo ""
 
 # 1. PyInstaller — génère le .app (console=False dans le .spec)
 echo "📦 PyInstaller…"
-pyinstaller --noconfirm --clean TableDeRappel.spec
+if [ -d venv ]; then
+  . venv/bin/activate
+  pip install -q pyinstaller 2>/dev/null || true
+  python -m PyInstaller --noconfirm --clean TableDeRappel.spec
+else
+  pyinstaller --noconfirm --clean TableDeRappel.spec
+fi
 
 # PyInstaller onedir crée dist/Table de Rappel/ ; sur macOS c'est affiché comme .app
 # ou dist/Table de Rappel.app selon la version
