@@ -31,7 +31,7 @@ Ce programme est un quiz interactif qui t'aide à mémoriser les 100 corresponda
 - 🎯 **Re-quiz erreurs** — relance un quiz uniquement sur tes erreurs
 - 📖 **Vue table** avec recherche et code couleur (maîtrisé / en cours / à revoir)
 - 🗑 **Reset stats** en un clic
-- 🔄 **Mise à jour** — vérifie les nouvelles versions via GitHub (clic sur « Vérifier les mises à jour »)
+- 🔄 **Mise à jour automatique** — télécharge et installe les nouvelles versions en un clic
 
 ---
 
@@ -81,30 +81,45 @@ python3 quiz_rappel_gui.py
 | `make check` | Vérifie la syntaxe Python |
 | `make clean` | Supprime les fichiers cache |
 | `make reset` | Remet les stats à zéro |
-| `make dmg` | Crée l'app .app et le .dmg (macOS) |
+| `make dmg` | Crée l'app .app, le .dmg et le .zip (macOS) |
+| `make release` | Build .dmg/.zip + publie sur GitHub Releases |
+| `make tag` | Crée et pousse le tag pour la version courante |
+| `make publish` | `tag` + `release` (tout-en-un) |
 | `make help` | Affiche l'aide |
 
 ---
 
-## Build .dmg (macOS)
+## Build et release (macOS)
 
-Pour créer un installateur `.dmg` et une app autonome :
+### Build local
 
 ```bash
-pip install pyinstaller
+# Avec venv
 make dmg
-# ou : ./build_dmg.sh
 ```
 
-Le fichier `dist/TableDeRappel-1.0.0.dmg` est généré. Glisse l'app dans Applications pour installer.
+Génère dans `dist/` :
+- `TableDeRappel-X.Y.Z.dmg` — installateur (glisser dans Applications)
+- `TableDeRappel-X.Y.Z.zip` — pour la mise à jour automatique
 
-### Workflow de mise à jour
+### Publier une release
 
-1. Incrémenter `VERSION` dans `quiz_rappel_gui.py` (ex: `"1.0.1"`)
-2. Lancer `make dmg`
-3. Créer un tag : `git tag v1.0.1`
-4. Publier une release sur GitHub avec le `.dmg` en pièce jointe
-5. Les utilisateurs cliquent sur « Vérifier les mises à jour » dans l'app pour télécharger
+```bash
+# 1. Incrémenter VERSION dans quiz_rappel_gui.py
+# 2. Commit et push
+git add -A && git commit -m "fix: ..." && git push
+
+# 3. Build + publication sur GitHub
+make release
+```
+
+Ou en une commande : `make publish` (après commit/push).
+
+Prérequis : `gh auth login` pour l'authentification GitHub CLI.
+
+### Mise à jour côté utilisateur
+
+Les utilisateurs cliquent sur « Vérifier les mises à jour » dans l'app. L'app télécharge, se remplace et se relance automatiquement.
 
 ---
 

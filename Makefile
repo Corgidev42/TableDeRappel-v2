@@ -9,6 +9,7 @@ STATS   := stats_rappel.csv
 
 VERSION := $(shell grep -E '^VERSION = ' $(GUI) | cut -d'"' -f2)
 DMG    := dist/TableDeRappel-$(VERSION).dmg
+ZIP    := dist/TableDeRappel-$(VERSION).zip
 
 .PHONY: run cli check clean reset dmg tag release publish help
 
@@ -49,11 +50,12 @@ release: dmg
 	@test -n "$(VERSION)" || { echo "❌ VERSION introuvable dans $(GUI)"; exit 1; }
 	@command -v gh >/dev/null 2>&1 || { echo "❌ gh CLI requis : brew install gh && gh auth login"; exit 1; }
 	@test -f $(DMG) || { echo "❌ $(DMG) introuvable"; exit 1; }
+	@test -f $(ZIP) || { echo "❌ $(ZIP) introuvable (mise à jour auto)"; exit 1; }
 	@if gh release view v$(VERSION) >/dev/null 2>&1; then \
-		gh release upload v$(VERSION) $(DMG) --clobber; \
+		gh release upload v$(VERSION) $(DMG) $(ZIP) --clobber; \
 	else \
-		gh release create v$(VERSION) $(DMG) --title "v$(VERSION)" \
-			--notes "Table de Rappel v$(VERSION) — Sauvegarde des stats en temps réel."; \
+		gh release create v$(VERSION) $(DMG) $(ZIP) --title "v$(VERSION)" \
+			--notes "Table de Rappel v$(VERSION) — Mise à jour automatique disponible."; \
 	fi
 	@echo "✅ Release v$(VERSION) : https://github.com/Corgidev42/TableDeRappel-v2/releases/tag/v$(VERSION)"
 

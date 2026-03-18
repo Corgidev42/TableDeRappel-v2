@@ -18,11 +18,13 @@ import json
 import os
 import random
 import shutil
+import subprocess
 import sys
 import tempfile
 import threading
 import time
 import urllib.request
+import zipfile
 import tkinter as tk
 from tkinter import ttk, messagebox
 
@@ -112,6 +114,17 @@ def _parse_version(s):
         return (0, 0, 0)
 
 
+def _get_app_bundle_path():
+    """Chemin du .app quand on tourne en mode frozen (macOS)."""
+    if not getattr(sys, "frozen", False):
+        return None
+    exe = sys.executable  # .../Table de Rappel.app/Contents/MacOS/Table de Rappel
+    # Remonter de 3 niveaux pour atteindre le .app
+    for _ in range(3):
+        exe = os.path.dirname(exe)
+    return exe
+
+
 def check_for_update(callback):
     """
     Vérifie si une mise à jour est disponible.
@@ -127,13 +140,17 @@ def check_for_update(callback):
             current = _parse_version(VERSION)
             latest = _parse_version(tag)
             if latest > current:
-                # Chercher un .dmg dans les assets
-                dmg_url = None
+                zip_url = dmg_url = None
                 for asset in data.get("assets", []):
-                    if asset.get("name", "").endswith(".dmg"):
+                    name = asset.get("name", "")
+                    if name.endswith(".zip"):
+                        zip_url = asset.get("browser_download_url")
+                    elif name.endswith(".dmg"):
                         dmg_url = asset.get("browser_download_url")
-                        break
-                callback(True, {"tag": tag, "url": dmg_url, "body": data.get("body", "")})
+                callback(True, {
+                    "tag": tag, "zip_url": zip_url, "dmg_url": dmg_url,
+                    "body": data.get("body", ""),
+                })
             else:
                 callback(True, {"up_to_date": True})
         except Exception as e:
@@ -142,15 +159,74 @@ def check_for_update(callback):
     threading.Thread(target=_do_check, daemon=True).start()
 
 
+def _install_update_self(zip_url, tag, callback):
+    """
+    Mise à jour automatique : télécharge le .zip, extrait, remplace l'app, relance.
+    Uniquement en mode .app sur macOS.
+    """
+    def _do_install():
+        try:
+            app_path = _get_app_bundle_path()
+            if not app_path or not os.path.isdir(app_path):
+                callback(False, "Mise à jour auto indisponible (pas en mode .app)")
+                return
+
+            cache_dir = os.path.join(
+                os.path.expanduser("~"),
+                "Library", "Caches", "TableDeRappel", "update",
+            )
+            os.makedirs(cache_dir, exist_ok=True)
+
+            # Télécharger le .zip
+            zip_path = os.path.join(cache_dir, f"TableDeRappel-{tag}.zip")
+            urllib.request.urlretrieve(zip_url, zip_path)
+
+            # Extraire
+            with zipfile.ZipFile(zip_path, "r") as zf:
+                zf.extractall(cache_dir)
+
+            # Le .zip contient "Table de Rappel.app" à la racine
+            extracted_app = os.path.join(cache_dir, "Table de Rappel.app")
+            if not os.path.isdir(extracted_app):
+                callback(False, "Format du .zip invalide (Table de Rappel.app manquant)")
+                return
+
+            # Script qui attend notre fin, remplace, relance
+            script = f'''#!/bin/bash
+APP_PATH="{app_path}"
+NEW_APP="{extracted_app}"
+PID={os.getpid()}
+while kill -0 $PID 2>/dev/null; do sleep 0.3; done
+sleep 0.5
+rm -rf "$APP_PATH"
+cp -R "$NEW_APP" "$APP_PATH"
+open "$APP_PATH"
+rm -rf "{cache_dir}"
+'''
+            script_path = os.path.join(tempfile.gettempdir(), "TableDeRappel_updater.sh")
+            with open(script_path, "w") as f:
+                f.write(script)
+            os.chmod(script_path, 0o755)
+
+            # Lancer le script en arrière-plan
+            subprocess.Popen(["bash", script_path], start_new_session=True)
+
+            callback(True, "restart")  # signal spécial : on va quitter
+        except Exception as e:
+            callback(False, str(e))
+
+    threading.Thread(target=_do_install, daemon=True).start()
+
+
 def download_and_open_dmg(url, callback):
-    """Télécharge le .dmg et l'ouvre. callback(success, message)."""
+    """Télécharge le .dmg et l'ouvre (fallback manuel). callback(success, message)."""
 
     def _do_download():
         try:
             dest = os.path.join(tempfile.gettempdir(), "TableDeRappel_update.dmg")
             urllib.request.urlretrieve(url, dest)
-            os.system(f'open "{dest}"')  # macOS : monte le .dmg
-            callback(True, "Le fichier .dmg a été téléchargé et ouvert. Glisse « Table de Rappel » dans le dossier Applications pour terminer la mise à jour.")
+            os.system(f'open "{dest}"')
+            callback(True, "Le .dmg a été ouvert. Glisse « Table de Rappel » dans Applications.")
         except Exception as e:
             callback(False, str(e))
 
@@ -444,28 +520,41 @@ class QuizApp(tk.Tk):
                 messagebox.showinfo("À jour", f"Tu as déjà la dernière version (v{VERSION}).")
                 return
             tag = result.get("tag", "")
-            url = result.get("url")
-            if url:
-                if messagebox.askyesno(
-                    "Mise à jour disponible",
-                    f"Une nouvelle version ({tag}) est disponible. Télécharger ?",
-                ):
-                    download_and_open_dmg(url, self._on_download_result)
+            zip_url = result.get("zip_url")
+            dmg_url = result.get("dmg_url")
+
+            # Auto-update si .zip dispo et on tourne en .app
+            use_auto = zip_url and _get_app_bundle_path()
+            msg = (
+                f"Une nouvelle version ({tag}) est disponible. Mise à jour automatique ?"
+                if use_auto
+                else f"Une nouvelle version ({tag}) est disponible. Télécharger ?"
+            )
+            if not messagebox.askyesno("Mise à jour disponible", msg):
+                return
+
+            if use_auto:
+                _install_update_self(zip_url, tag.lstrip("v"), self._on_download_result)
+            elif dmg_url:
+                download_and_open_dmg(dmg_url, self._on_download_result)
             else:
                 messagebox.showinfo(
                     "Mise à jour disponible",
-                    f"Version {tag} disponible. Rends-toi sur GitHub pour la télécharger.",
+                    f"Version {tag} disponible sur GitHub.",
                 )
 
         self.after(0, _show)
 
     def _on_download_result(self, success, message):
-        """Callback après téléchargement du .dmg (thread)."""
+        """Callback après téléchargement ou mise à jour auto (thread)."""
         def _show():
             if success:
-                messagebox.showinfo("Téléchargement terminé", message)
+                if message == "restart":
+                    self._on_quit()  # Ferme l'app pour que l'updater la remplace
+                else:
+                    messagebox.showinfo("Téléchargement terminé", message)
             else:
-                messagebox.showerror("Erreur", f"Échec du téléchargement : {message}")
+                messagebox.showerror("Erreur", f"Échec : {message}")
 
         self.after(0, _show)
 

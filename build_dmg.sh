@@ -74,9 +74,16 @@ else
     hdiutil create -volname "Table de Rappel" -srcfolder "$DMG_DIR" -ov -format UDZO "$DMG_FILE"
 fi
 
+# 3. Créer le .zip pour la mise à jour auto
+VERSION=$(grep -E '^VERSION = ' quiz_rappel_gui.py | cut -d'"' -f2)
+ZIP_FILE="$DIST/TableDeRappel-${VERSION}.zip"
+echo "📦 Création du .zip (mise à jour auto)…"
+rm -f "$ZIP_FILE"
+(cd "$DIST" && zip -r "TableDeRappel-${VERSION}.zip" "Table de Rappel.app")
+
 echo ""
 echo "✅ Terminé !"
 echo "   📱 App : $APP_PATH"
 echo "   💿 DMG : $DMG_FILE"
+echo "   📦 ZIP : $ZIP_FILE (pour mise à jour auto)"
 echo ""
-echo "Pour publier : uploade $DMG_FILE sur GitHub Releases avec le tag v$(grep -E '^VERSION = ' quiz_rappel_gui.py | cut -d'"' -f2)"
