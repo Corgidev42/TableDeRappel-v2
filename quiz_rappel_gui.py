@@ -29,7 +29,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 # Version — incrémenter à chaque release (ex: v1.0.1)
-VERSION = "1.0.2"
+VERSION = "1.0.3"
 GITHUB_REPO = "Corgidev42/TableDeRappel-v2"
 
 # ============================================================
@@ -118,11 +118,16 @@ def _get_app_bundle_path():
     """Chemin du .app quand on tourne en mode frozen (macOS)."""
     if not getattr(sys, "frozen", False):
         return None
-    exe = sys.executable  # .../Table de Rappel.app/Contents/MacOS/Table de Rappel
-    # Remonter de 3 niveaux pour atteindre le .app
-    for _ in range(3):
-        exe = os.path.dirname(exe)
-    return exe
+    path = os.path.abspath(sys.executable)
+    # Remonter jusqu'à trouver un dossier .app
+    for _ in range(10):  # sécurité
+        parent = os.path.dirname(path)
+        if not parent or parent == path:
+            return None
+        path = parent
+        if path.endswith(".app") and os.path.isdir(path):
+            return path
+    return None
 
 
 def check_for_update(callback):
