@@ -27,7 +27,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 # Version — incrémenter à chaque release (ex: v1.0.1)
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 GITHUB_REPO = "Corgidev42/TableDeRappel-v2"
 
 # ============================================================
@@ -241,8 +241,19 @@ class QuizApp(tk.Tk):
         # Raccourci global : Échap = retour menu
         self.bind("<Escape>", lambda e: self.show_main_menu())
 
+        # Fermeture fenêtre : sauvegarder avant de quitter
+        self.protocol("WM_DELETE_WINDOW", self._on_quit)
+
         # Démarrer avec le menu
         self.show_main_menu()
+
+    def _on_quit(self):
+        """Sauvegarde les stats avant de fermer."""
+        try:
+            save_stats(self.stats)
+        except Exception:
+            pass
+        self.destroy()
 
     # --------------------------------------------------------
     # Utilitaires UI
@@ -797,6 +808,9 @@ class QuizApp(tk.Tk):
         self.results.append((mode, nombre, mot, answer, correct, elapsed))
         self.question_start_time = time.time()
 
+        # Sauvegarde immédiate — stats à jour après chaque réponse
+        save_stats(self.stats)
+
         self._show_feedback(correct, expected, elapsed)
 
     # --------------------------------------------------------
@@ -974,7 +988,7 @@ class QuizApp(tk.Tk):
             ).pack(side="left", padx=10)
 
         self.make_button(
-            btn_frame, "🚪  Quitter", self.destroy,
+            btn_frame, "🚪  Quitter", self._on_quit,
         ).pack(side="left", padx=10)
 
     def _requiz_errors(self, errors):
