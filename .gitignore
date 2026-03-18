@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 .DS_Store
 .app_data/
+*.iconset/
 # PyInstaller
 build/
 dist/

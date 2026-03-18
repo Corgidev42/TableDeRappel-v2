@@ -14,8 +14,8 @@ a = Analysis(
     ['quiz_rappel_gui.py'],
     pathex=[],
     binaries=[],
-    datas=[],  # Plus de CSV — table intégrée, stats en JSON
-    hiddenimports=[],
+    datas=[('TableDeRappel_icon.png', '.')],
+    hiddenimports=['PIL', 'PIL._tkinter_finder'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -61,7 +61,7 @@ coll = COLLECT(
 app = BUNDLE(
     coll,
     name='Table de Rappel.app',
-    icon=None,
+    icon='TableDeRappel.icns',
     bundle_identifier='com.TableDeRappel.app',
     version=APP_VERSION,
     info_plist={

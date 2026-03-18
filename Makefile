@@ -4,53 +4,48 @@
 
 PYTHON  ?= python3
 GUI     := quiz_rappel_gui.py
-CLI     := quiz_rappel.py
 STATS   := .app_data/stats.json
 
 VERSION := $(shell grep -E '^VERSION = ' $(GUI) | cut -d'"' -f2)
-DMG    := dist/TableDeRappel-$(VERSION).dmg
-ZIP    := dist/TableDeRappel-$(VERSION).zip
+DMG     := dist/TableDeRappel-$(VERSION).dmg
+ZIP     := dist/TableDeRappel-$(VERSION).zip
 
-.PHONY: run cli check clean reset dmg tag release publish help
+.PHONY: run check clean reset dmg tag release publish help
 
-## run : Lance le quiz (interface graphique)
+## run : Lance l'application
 run:
 	@$(PYTHON) $(GUI)
 
-## cli : Lance la version terminal
-cli:
-	@$(PYTHON) $(CLI)
-
-## check : Vérifie la syntaxe des fichiers Python
+## check : Vérifie la syntaxe Python
 check:
 	@echo "🔍 Vérification de la syntaxe…"
 	@$(PYTHON) -m py_compile $(GUI) && echo "  ✅ $(GUI) OK"
-	@$(PYTHON) -m py_compile $(CLI) && echo "  ✅ $(CLI) OK"
 	@echo "✅ Tout est bon !"
 
-## clean : Supprime les fichiers cache Python
+## clean : Supprime les fichiers cache
 clean:
 	@echo "🧹 Nettoyage…"
 	@find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 	@find . -type f -name "*.pyc" -delete 2>/dev/null || true
 	@echo "✅ Nettoyé"
 
-## dmg : Crée l'app .app et le .dmg (macOS)
+## dmg : Crée l'app .app, le .dmg et le .zip (macOS)
 dmg:
-	@chmod +x build_dmg.sh && ./build_dmg.sh
+	@chmod +x scripts/build_dmg.sh scripts/make_icns.sh 2>/dev/null || true
+	@./scripts/build_dmg.sh
 
 ## tag : Crée et pousse le tag git pour la version courante
 tag:
 	@git tag -a v$(VERSION) -m "v$(VERSION)" 2>/dev/null || true
 	@git push origin v$(VERSION)
 
-## release : Build .dmg + push la release sur GitHub
+## release : Build .dmg/.zip + publie sur GitHub
 release: dmg
 	@echo "📤 Publication sur GitHub…"
 	@test -n "$(VERSION)" || { echo "❌ VERSION introuvable dans $(GUI)"; exit 1; }
 	@command -v gh >/dev/null 2>&1 || { echo "❌ gh CLI requis : brew install gh && gh auth login"; exit 1; }
 	@test -f $(DMG) || { echo "❌ $(DMG) introuvable"; exit 1; }
-	@test -f $(ZIP) || { echo "❌ $(ZIP) introuvable (mise à jour auto)"; exit 1; }
+	@test -f $(ZIP) || { echo "❌ $(ZIP) introuvable"; exit 1; }
 	@if gh release view v$(VERSION) >/dev/null 2>&1; then \
 		gh release upload v$(VERSION) $(DMG) $(ZIP) --clobber; \
 	else \
@@ -59,7 +54,7 @@ release: dmg
 	fi
 	@echo "✅ Release v$(VERSION) : https://github.com/Corgidev42/TableDeRappel-v2/releases/tag/v$(VERSION)"
 
-## publish : tag + release (tout-en-un : commit/push d'abord!)
+## publish : tag + release (commit/push d'abord !)
 publish: tag release
 
 ## reset : Remet les statistiques à zéro

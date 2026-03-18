@@ -26,43 +26,55 @@ import zipfile
 import tkinter as tk
 from tkinter import ttk, messagebox
 
+try:
+    from PIL import Image, ImageTk
+    _HAS_PIL = True
+except ImportError:
+    _HAS_PIL = False
+
 # Version — incrémenter à chaque release (ex: v1.0.1)
-VERSION = "1.0.4"
+VERSION = "1.0.5"
 GITHUB_REPO = "Corgidev42/TableDeRappel-v2"
 
 # ============================================================
-# Constantes de style — thème Catppuccin Mocha
+# Constantes de style — thème "Memory Palace" (violet & turquoise)
 # ============================================================
-BG_DARK = "#1e1e2e"
-BG_CARD = "#2a2a3d"
-BG_INPUT = "#3a3a5c"
-FG_PRIMARY = "#e4e8f7"          # brighter white for better contrast
-FG_SECONDARY = "#b0b8d1"        # slightly brighter secondary
-FG_ACCENT = "#89b4fa"
-FG_GREEN = "#a6e3a1"
-FG_RED = "#f38ba8"
-FG_YELLOW = "#f9e2af"
-FG_MAUVE = "#cba6f7"
-FG_ORANGE = "#fab387"
-BTN_BG = "#45475a"
-BTN_HOVER = "#585b70"
-BTN_ACCENT = "#5d8fd6"           # darker blue for better text contrast
-BTN_ACCENT_FG = "#ffffff"        # white text on accent buttons
-TAB_ACTIVE_BG = "#3d3f58"        # visible active tab background
-TAB_ACTIVE_FG = "#ffffff"        # bright white active tab text
-CHECK_ON = "#a6e3a1"             # green indicator when checked
-CHECK_BG = "#2a2a3d"             # checkbox background
+BG_DARK = "#0d0b14"
+BG_CARD = "#15101d"
+BG_INPUT = "#1c1626"
+BG_CARD_HOVER = "#1e1828"
+FG_PRIMARY = "#f2eef8"
+FG_SECONDARY = "#8b7da8"
+FG_ACCENT = "#a78bfa"
+FG_GREEN = "#34d399"
+FG_RED = "#f87171"
+FG_YELLOW = "#facc15"
+FG_MAUVE = "#c084fc"
+FG_ORANGE = "#fb923c"
+FG_GOLD = "#eab308"
+BTN_BG = "#211c2e"
+BTN_HOVER = "#2a2438"
+BTN_ACCENT = "#7c3aed"
+BTN_ACCENT_FG = "#ffffff"
+TAB_ACTIVE_BG = "#2e2640"
+TAB_ACTIVE_FG = "#ffffff"
+CHECK_ON = "#34d399"
+CHECK_BG = "#15101d"
+BORDER_ACCENT = "#3d3560"
+SHADOW = "#08060c"
 
-FONT_TITLE = ("Helvetica", 28, "bold")
-FONT_SUBTITLE = ("Helvetica", 16)
-FONT_BODY = ("Helvetica", 13)
-FONT_BODY_BOLD = ("Helvetica", 13, "bold")
-FONT_SMALL = ("Helvetica", 11)
-FONT_BIG = ("Helvetica", 42, "bold")
-FONT_HUGE = ("Helvetica", 56, "bold")
-FONT_QUESTION = ("Helvetica", 20)
-FONT_INPUT = ("Helvetica", 18)
-FONT_STREAK = ("Helvetica", 15, "bold")
+# Helvetica Neue sur Mac, fallback Helvetica ailleurs
+_FONT = "Helvetica Neue" if sys.platform == "darwin" else "Helvetica"
+FONT_TITLE = (_FONT, 30, "bold")
+FONT_SUBTITLE = (_FONT, 15)
+FONT_BODY = (_FONT, 13)
+FONT_BODY_BOLD = (_FONT, 13, "bold")
+FONT_SMALL = (_FONT, 11)
+FONT_BIG = (_FONT, 44, "bold")
+FONT_HUGE = (_FONT, 58, "bold")
+FONT_QUESTION = (_FONT, 21)
+FONT_INPUT = (_FONT, 19)
+FONT_STREAK = (_FONT, 15, "bold")
 
 # Auto-avance (ms) après une bonne réponse
 AUTO_ADVANCE_MS = 1200
@@ -99,6 +111,33 @@ TABLE_EMBEDDED = [
     ("95", "sac a dos"), ("96", "tapis"), ("97", "guitare"), ("98", "soleil"),
     ("99", "lune"), ("100", "sablier"),
 ]
+
+
+def _icon_path():
+    """Chemin de l'icône (dev ou .app)."""
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return os.path.join(sys._MEIPASS, "TableDeRappel_icon.png")
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "TableDeRappel_icon.png")
+
+
+def _load_logo_photo(width=80):
+    """Charge l'icône en PhotoImage pour le menu (ou None si indisponible)."""
+    if not _HAS_PIL:
+        return None
+    path = _icon_path()
+    if not os.path.isfile(path):
+        return None
+    try:
+        img = Image.open(path)
+        if img.mode != "RGBA":
+            img = img.convert("RGBA")
+        w, h = img.size
+        s = min(w, h)
+        img = img.crop(((w - s) // 2, (h - s) // 2, (w + s) // 2, (h + s) // 2))
+        img = img.resize((width, width), Image.Resampling.LANCZOS)
+        return ImageTk.PhotoImage(img)
+    except Exception:
+        return None
 
 
 def _get_app_support_dir():
@@ -147,6 +186,20 @@ def _get_app_bundle_path():
     return None
 
 
+def _can_auto_update():
+    """
+    Vérifie si la mise à jour auto est possible.
+    Échoue si l'app tourne depuis un volume monté (ex: DMG) car on ne peut pas écraser.
+    """
+    app_path = _get_app_bundle_path()
+    if not app_path:
+        return False
+    # Ne pas tenter si l'app est sur /Volumes/ (DMG) — lecteur en lecture seule
+    if "/Volumes/" in app_path:
+        return False
+    return os.path.isdir(app_path)
+
+
 def check_for_update(callback):
     """
     Vérifie si une mise à jour est disponible.
@@ -165,10 +218,11 @@ def check_for_update(callback):
                 zip_url = dmg_url = None
                 for asset in data.get("assets", []):
                     name = asset.get("name", "")
-                    if name.endswith(".zip"):
-                        zip_url = asset.get("browser_download_url")
-                    elif name.endswith(".dmg"):
-                        dmg_url = asset.get("browser_download_url")
+                    url = asset.get("browser_download_url")
+                    if name.endswith(".zip") and "TableDeRappel" in name:
+                        zip_url = url
+                    elif name.endswith(".dmg") and "TableDeRappel" in name:
+                        dmg_url = url
                 callback(True, {
                     "tag": tag, "zip_url": zip_url, "dmg_url": dmg_url,
                     "body": data.get("body", ""),
@@ -199,9 +253,14 @@ def _install_update_self(zip_url, tag, callback):
             )
             os.makedirs(cache_dir, exist_ok=True)
 
-            # Télécharger le .zip
+            # Télécharger le .zip (User-Agent requis par GitHub)
             zip_path = os.path.join(cache_dir, f"TableDeRappel-{tag}.zip")
-            urllib.request.urlretrieve(zip_url, zip_path)
+            req = urllib.request.Request(zip_url, headers={"User-Agent": "TableDeRappel-Updater/1.0"})
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                with open(zip_path, "wb") as f:
+                    f.write(resp.read())
+                    f.flush()
+                    os.fsync(f.fileno())
 
             # Extraire
             with zipfile.ZipFile(zip_path, "r") as zf:
@@ -213,17 +272,22 @@ def _install_update_self(zip_url, tag, callback):
                 callback(False, "Format du .zip invalide (Table de Rappel.app manquant)")
                 return
 
-            # Script qui attend notre fin, remplace, relance
+            # Script qui attend notre fin, remplace, relance (ditto = copie fidèle macOS)
+            pid = os.getpid()
             script = f'''#!/bin/bash
-APP_PATH="{app_path}"
-NEW_APP="{extracted_app}"
-PID={os.getpid()}
+set -e
+APP_PATH={repr(app_path)}
+NEW_APP={repr(extracted_app)}
+CACHE_DIR={repr(cache_dir)}
+PID={pid}
 while kill -0 $PID 2>/dev/null; do sleep 0.3; done
-sleep 0.5
-rm -rf "$APP_PATH"
-cp -R "$NEW_APP" "$APP_PATH"
-open "$APP_PATH"
-rm -rf "{cache_dir}"
+sleep 1
+if [ -d "$NEW_APP" ]; then
+  rm -rf "$APP_PATH"
+  ditto "$NEW_APP" "$APP_PATH" 2>/dev/null || cp -R "$NEW_APP" "$APP_PATH"
+  open "$APP_PATH"
+fi
+rm -rf "$CACHE_DIR"
 '''
             script_path = os.path.join(tempfile.gettempdir(), "TableDeRappel_updater.sh")
             with open(script_path, "w") as f:
@@ -375,27 +439,29 @@ class QuizApp(tk.Tk):
     def make_button(self, parent, text, command, accent=False, width=25,
                     danger=False):
         if danger:
-            bg, fg, hover_bg = FG_RED, "#ffffff", "#e06080"
+            bg, fg, hover_bg = FG_RED, "#ffffff", "#fda4af"
         elif accent:
-            bg, fg, hover_bg = BTN_ACCENT, BTN_ACCENT_FG, "#4a7abd"
+            bg, fg, hover_bg = BTN_ACCENT, BTN_ACCENT_FG, "#8b5cf6"
         else:
             bg, fg, hover_bg = BTN_BG, FG_PRIMARY, BTN_HOVER
 
-        # Use tk.Label instead of tk.Button — macOS ignores bg/fg on
-        # native Aqua buttons, but Labels always respect colors.
         btn = tk.Label(
             parent, text=text,
             font=FONT_BODY_BOLD, bg=bg, fg=fg,
-            cursor="hand2", width=width, pady=8,
+            cursor="hand2", width=width, pady=10, padx=4,
             relief="flat", anchor="center",
+            highlightthickness=1, highlightbackground=BORDER_ACCENT,
         )
         btn.bind("<Button-1>", lambda e: command())
-        btn.bind("<Enter>", lambda e: btn.configure(bg=hover_bg))
-        btn.bind("<Leave>", lambda e: btn.configure(bg=bg))
+        btn.bind("<Enter>", lambda e: btn.configure(bg=hover_bg, highlightbackground=FG_ACCENT))
+        btn.bind("<Leave>", lambda e: btn.configure(bg=bg, highlightbackground=BORDER_ACCENT))
         return btn
 
     def make_card(self, parent, **kwargs):
-        return tk.Frame(parent, bg=BG_CARD, padx=20, pady=15, **kwargs)
+        """Carte avec bordure subtile et padding généreux."""
+        card = tk.Frame(parent, bg=BG_CARD, padx=24, pady=18,
+                        highlightthickness=1, highlightbackground=BORDER_ACCENT, **kwargs)
+        return card
 
     @staticmethod
     def _bind_mousewheel(canvas):
@@ -418,18 +484,35 @@ class QuizApp(tk.Tk):
         self.clear()
         self.unbind("<Return>")
 
-        # Titre
+        # Header avec logo + titre
+        header = tk.Frame(self.container, bg=BG_DARK)
+        header.pack(pady=(28, 0))
+
+        logo_img = _load_logo_photo(72)
+        if logo_img:
+            self._logo_ref = logo_img  # Garde la ref (évite GC)
+            logo_lbl = tk.Label(header, image=logo_img, bg=BG_DARK)
+            logo_lbl.pack(side="left", padx=(0, 16))
+            logo_lbl.bind("<Button-1>", lambda e: self._show_about())
+            logo_lbl.config(cursor="hand2")
+
+        title_frame = tk.Frame(header, bg=BG_DARK)
+        title_frame.pack(side="left")
         tk.Label(
-            self.container, text="🧠 Table de Rappel", font=FONT_TITLE,
+            title_frame, text="Table de Rappel",
+            font=("Helvetica Neue", 32, "bold") if sys.platform == "darwin" else ("Helvetica", 32, "bold"),
             bg=BG_DARK, fg=FG_ACCENT,
-        ).pack(pady=(35, 3))
+        ).pack(anchor="w")
         about_lbl = tk.Label(
-            self.container, text=f"Entraîne ta mémoire avec le système majeur · v{VERSION}",
+            title_frame,
+            text=f"Entraîne ta mémoire avec le système majeur · v{VERSION}",
             font=FONT_SUBTITLE, bg=BG_DARK, fg=FG_SECONDARY,
             cursor="hand2",
         )
-        about_lbl.pack(pady=(0, 25))
+        about_lbl.pack(anchor="w", pady=(2, 0))
         about_lbl.bind("<Button-1>", lambda e: self._show_about())
+
+        tk.Frame(self.container, bg=BG_DARK, height=22).pack()  # Espace
 
         # Stats résumé
         total = len(self.stats)
@@ -511,7 +594,7 @@ class QuizApp(tk.Tk):
         tk.Label(
             footer_row,
             text="Raccourcis : 1-5 = modes · Échap = menu · Entrée = valider",
-            font=FONT_SMALL, bg=BG_DARK, fg="#585b70",
+            font=FONT_SMALL, bg=BG_DARK, fg=FG_SECONDARY,
         ).pack(side="left")
         # Lien mise à jour
         upd_lbl = tk.Label(
@@ -521,22 +604,34 @@ class QuizApp(tk.Tk):
         upd_lbl.pack(side="left")
         upd_lbl.bind("<Button-1>", lambda e: self._check_update())
 
-    def _draw_mastery_bar(self, canvas, total, ok, en_cours, revoir, non_vus):
-        """Dessine une barre de progression colorée de la maîtrise globale."""
-        canvas.update_idletasks()
-        w = canvas.winfo_width()
-        if total == 0 or w <= 0:
+    def _draw_rounded_rect(self, canvas, x1, y1, x2, y2, fill, r=4):
+        """Dessine un rectangle aux coins arrondis."""
+        if x2 <= x1 or y2 <= y1:
             return
+        r = min(r, (x2 - x1) // 2, (y2 - y1) // 2)
+        canvas.create_rectangle(x1 + r, y1, x2 - r, y2, fill=fill, outline="")
+        canvas.create_rectangle(x1, y1 + r, x2, y2 - r, fill=fill, outline="")
+        canvas.create_arc(x1, y1, x1 + 2 * r, y1 + 2 * r, start=90, extent=90, fill=fill, outline="")
+        canvas.create_arc(x2 - 2 * r, y1, x2, y1 + 2 * r, start=0, extent=90, fill=fill, outline="")
+        canvas.create_arc(x1, y2 - 2 * r, x1 + 2 * r, y2, start=180, extent=90, fill=fill, outline="")
+        canvas.create_arc(x2 - 2 * r, y2 - 2 * r, x2, y2, start=270, extent=90, fill=fill, outline="")
+
+    def _draw_mastery_bar(self, canvas, total, ok, en_cours, revoir, non_vus):
+        """Dessine une barre de progression colorée aux coins arrondis."""
+        canvas.update_idletasks()
+        w, h = canvas.winfo_width(), canvas.winfo_height()
+        if total == 0 or w <= 0 or h <= 0:
+            return
+        r = min(4, h // 2)
         segments = [
             (ok, FG_GREEN), (en_cours, FG_YELLOW),
-            (revoir, FG_RED), (non_vus, "#45475a"),
+            (revoir, FG_RED), (non_vus, BTN_BG),
         ]
         x = 0
         for count, color in segments:
-            seg_w = int(w * count / total)
+            seg_w = max(0, int(w * count / total))
             if seg_w > 0:
-                canvas.create_rectangle(x, 0, x + seg_w, 12,
-                                        fill=color, outline="")
+                self._draw_rounded_rect(canvas, x, 0, x + seg_w, h, color, r)
             x += seg_w
 
     def _show_about(self):
@@ -567,12 +662,13 @@ class QuizApp(tk.Tk):
             zip_url = result.get("zip_url")
             dmg_url = result.get("dmg_url")
 
-            # Auto-update si .zip dispo et on tourne en .app
-            use_auto = zip_url and _get_app_bundle_path()
+            # Auto-update si .zip dispo et app installée (pas depuis DMG)
+            use_auto = zip_url and _can_auto_update()
             msg = (
                 f"Une nouvelle version ({tag}) est disponible. Mise à jour automatique ?"
                 if use_auto
-                else f"Une nouvelle version ({tag}) est disponible. Télécharger ?"
+                else f"Une nouvelle version ({tag}) est disponible. "
+                     f"Télécharger le .dmg ? (Pour la maj auto, place l'app dans Applications d'abord.)"
             )
             if not messagebox.askyesno("Mise à jour disponible", msg):
                 return
@@ -887,9 +983,12 @@ class QuizApp(tk.Tk):
 
     def _draw_progress(self, canvas, current, total):
         canvas.update_idletasks()
-        w = canvas.winfo_width()
+        w, h = canvas.winfo_width(), canvas.winfo_height()
+        if total <= 0 or w <= 0 or h <= 0:
+            return
         fill_w = int(w * (current - 1) / total)
-        canvas.create_rectangle(0, 0, fill_w, 6, fill=FG_ACCENT, outline="")
+        if fill_w > 0:
+            self._draw_rounded_rect(canvas, 0, 0, fill_w, h, FG_ACCENT, min(3, h // 2))
 
     def _update_timer(self):
         if hasattr(self, "timer_label") and self.timer_label.winfo_exists():
@@ -1027,7 +1126,7 @@ class QuizApp(tk.Tk):
             # Countdown label
             countdown_lbl = tk.Label(
                 self.container, text=f"Suite automatique…",
-                font=FONT_SMALL, bg=BG_DARK, fg="#585b70",
+                font=FONT_SMALL, bg=BG_DARK, fg=FG_SECONDARY,
             )
             countdown_lbl.pack()
             self._auto_advance_id = self.after(AUTO_ADVANCE_MS, btn_cmd)
@@ -1373,8 +1472,8 @@ class QuizApp(tk.Tk):
         make_tab("🔻 Moins connus", "worst")
         make_tab("🔺 Plus connus", "best")
         tk.Label(
-            tab_frame, text="(Les éléments révisés apparaissent dans Plus connus)",
-            font=FONT_SMALL, bg=BG_DARK, fg="#585b70",
+            tab_frame, text=            "(Les éléments révisés apparaissent dans Plus connus)",
+            font=FONT_SMALL, bg=BG_DARK, fg=FG_SECONDARY,
         ).pack(side="left", padx=(12, 0))
 
         # Bouton reset
@@ -1446,11 +1545,11 @@ class QuizApp(tk.Tk):
             s_nm, s_mn, t = vals
             total_score = s_nm + s_mn
             if total_score >= 4:
-                row_bg = "#1e3a2e"
+                row_bg = "#0d2818"
             elif total_score < 0:
-                row_bg = "#3a1e2e"
+                row_bg = "#28181d"
             else:
-                row_bg = BG_CARD if i % 2 == 0 else "#252540"
+                row_bg = BG_CARD if i % 2 == 0 else BG_CARD_HOVER
 
             row = tk.Frame(inner, bg=row_bg, pady=3)
             row.pack(fill="x", pady=1)
@@ -1652,7 +1751,7 @@ class QuizApp(tk.Tk):
         self._edit_entries = {}  # nombre -> StringVar
 
         for i, (nombre, mot) in enumerate(self.table):
-            row_bg = BG_CARD if i % 2 == 0 else "#252540"
+            row_bg = BG_CARD if i % 2 == 0 else BG_CARD_HOVER
             row = tk.Frame(inner, bg=row_bg, pady=4)
             row.pack(fill="x", pady=1)
 

@@ -1,0 +1,2 @@
+# Pour le build (icône .icns et logo dans l'app)
+pillow>=10.0.0

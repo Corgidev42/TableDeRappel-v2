@@ -1,13 +1,13 @@
 #!/bin/bash
 # Build Table de Rappel .app et .dmg
-# Usage: ./build_dmg.sh
+# Usage: ./scripts/build_dmg.sh
 #
 # Prérequis :
-#   pip install pyinstaller
+#   pip install pyinstaller pillow
 #   (optionnel) brew install create-dmg  — pour un .dmg avec lien Applications
 
 set -e
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 APP_NAME="Table de Rappel"
 DIST="dist"
@@ -17,22 +17,26 @@ DMG_FILE="$DIST/TableDeRappel-$(grep -E '^VERSION = ' quiz_rappel_gui.py | cut -
 echo "🔨 Build de $APP_NAME…"
 echo ""
 
+# 0. Générer l'icône .icns si possible
+if [ -f scripts/make_icns.sh ]; then
+  chmod +x scripts/make_icns.sh
+  ./scripts/make_icns.sh 2>/dev/null || echo "⚠️  Icône .icns non générée (Pillow requis)"
+fi
+
 # 1. PyInstaller — génère le .app (console=False dans le .spec)
 echo "📦 PyInstaller…"
 if [ -d venv ]; then
   . venv/bin/activate
-  pip install -q pyinstaller 2>/dev/null || true
+  pip install -q pyinstaller pillow 2>/dev/null || true
   python -m PyInstaller --noconfirm --clean TableDeRappel.spec
 else
   pyinstaller --noconfirm --clean TableDeRappel.spec
 fi
 
 # PyInstaller onedir crée dist/Table de Rappel/ ; sur macOS c'est affiché comme .app
-# ou dist/Table de Rappel.app selon la version
 if [ -d "$DIST/$APP_NAME.app" ]; then
     APP_PATH="$DIST/$APP_NAME.app"
 elif [ -d "$DIST/$APP_NAME" ]; then
-    # Dossier onedir sans .app : sur macOS on le renomme pour la distribution
     if [ -f "$DIST/$APP_NAME/$APP_NAME" ] || [ -f "$DIST/$APP_NAME/Table de Rappel" ]; then
         mv "$DIST/$APP_NAME" "$DIST/$APP_NAME.app"
         APP_PATH="$DIST/$APP_NAME.app"
@@ -53,11 +57,8 @@ echo "💿 Création du .dmg…"
 mkdir -p "$DMG_DIR"
 rm -rf "$DMG_DIR"/*
 cp -R "$APP_PATH" "$DMG_DIR/"
-
-# Supprimer l'ancien .dmg
 rm -f "$DMG_FILE"
 
-# Utiliser create-dmg si installé, sinon hdiutil
 if command -v create-dmg &> /dev/null; then
     create-dmg \
         --volname "Table de Rappel" \
@@ -70,7 +71,6 @@ if command -v create-dmg &> /dev/null; then
         "$DMG_FILE" \
         "$DMG_DIR/"
 else
-    # Fallback : hdiutil (natif macOS)
     hdiutil create -volname "Table de Rappel" -srcfolder "$DMG_DIR" -ov -format UDZO "$DMG_FILE"
 fi
 
@@ -85,5 +85,5 @@ echo ""
 echo "✅ Terminé !"
 echo "   📱 App : $APP_PATH"
 echo "   💿 DMG : $DMG_FILE"
-echo "   📦 ZIP : $ZIP_FILE (pour mise à jour auto)"
+echo "   📦 ZIP : $ZIP_FILE"
 echo ""
