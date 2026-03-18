@@ -29,7 +29,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 # Version — incrémenter à chaque release (ex: v1.0.1)
-VERSION = "1.0.1"
+VERSION = "1.0.2"
 GITHUB_REPO = "Corgidev42/TableDeRappel-v2"
 
 # ============================================================
@@ -266,13 +266,18 @@ def load_stats(table):
 
 
 def save_stats(stats):
-    """Sauvegarde les stats."""
+    """Sauvegarde les stats (écriture immédiate sur disque)."""
+    stats_dir = os.path.dirname(STATS_FILE)
+    if stats_dir:
+        os.makedirs(stats_dir, exist_ok=True)
     with open(STATS_FILE, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(["Nombre", "Mot", "Score_nombre->mot",
                          "Score_mot->nombre", "Temps_moyen_par_lettre"])
         for (nombre, mot), (s_nm, s_mn, t) in stats.items():
             writer.writerow([nombre, mot, s_nm, s_mn, f"{t:.3f}"])
+        f.flush()
+        os.fsync(f.fileno())
 
 
 # ============================================================
@@ -1109,7 +1114,7 @@ class QuizApp(tk.Tk):
         tk.Label(
             self.container,
             text="Révise sans pression ! Clique ou appuie sur Espace "
-                 "pour retourner la carte.",
+                 "pour retourner la carte. (Ce mode ne modifie pas les stats)",
             font=FONT_BODY, bg=BG_DARK, fg=FG_SECONDARY,
         ).pack(pady=(0, 20))
 
@@ -1328,6 +1333,10 @@ class QuizApp(tk.Tk):
 
         make_tab("🔻 Moins connus", "worst")
         make_tab("🔺 Plus connus", "best")
+        tk.Label(
+            tab_frame, text="(Les éléments révisés apparaissent dans Plus connus)",
+            font=FONT_SMALL, bg=BG_DARK, fg="#585b70",
+        ).pack(side="left", padx=(12, 0))
 
         # Bouton reset
         reset_btn = tk.Label(
