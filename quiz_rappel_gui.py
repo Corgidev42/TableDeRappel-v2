@@ -272,7 +272,8 @@ def _install_update_self(zip_url, tag, callback):
                 callback(False, "Format du .zip invalide (Table de Rappel.app manquant)")
                 return
 
-            # Script qui attend notre fin, remplace, relance (ditto = copie fidèle macOS)
+            # Script qui attend notre fin, remplace, relance
+            # xattr -cr : retire quarantine/Gatekeeper qui bloque les apps téléchargées
             pid = os.getpid()
             script = f'''#!/bin/bash
 set -e
@@ -283,8 +284,11 @@ PID={pid}
 while kill -0 $PID 2>/dev/null; do sleep 0.3; done
 sleep 1
 if [ -d "$NEW_APP" ]; then
+  xattr -cr "$NEW_APP" 2>/dev/null || true
   rm -rf "$APP_PATH"
   ditto "$NEW_APP" "$APP_PATH" 2>/dev/null || cp -R "$NEW_APP" "$APP_PATH"
+  xattr -cr "$APP_PATH" 2>/dev/null || true
+  chmod +x "$APP_PATH/Contents/MacOS/Table de Rappel" 2>/dev/null || true
   open "$APP_PATH"
 fi
 rm -rf "$CACHE_DIR"
